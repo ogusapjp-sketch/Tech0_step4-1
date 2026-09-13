@@ -122,6 +122,49 @@ describe("Cookie ↔ Authorization ヘッダの詰め替え", () => {
   });
 });
 
+describe("FastAPI の応答待ちのタイムアウト（IT-34。15秒は人間が決定）", () => {
+  it("test_extra_ 15秒たっても応答がなければ中断して 500 INTERNAL_ERROR（15秒未満は待つ）", async () => {
+    jest.useFakeTimers();
+    try {
+      fetchMock.mockImplementation(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new DOMException("This operation was aborted", "AbortError")));
+          }),
+      );
+      const body = JSON.stringify({ idempotency_key: "k" });
+      let settled = false;
+      const pending = postTransaction(bffRequest("/api/transactions", { method: "POST", cookies: SESSION, body })).then((r) => {
+        settled = true;
+        return r;
+      });
+
+      await jest.advanceTimersByTimeAsync(14999);
+      expect(settled).toBe(false);
+
+      await jest.advanceTimersByTimeAsync(1);
+      const response = await pending;
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ code: "INTERNAL_ERROR", message: "処理に失敗しました。もう一度お試しください" });
+      expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("test_extra_ 応答があればタイマーを解除する", async () => {
+    jest.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValueOnce(jsonResponse(200, { tax_rate_bp: 1000, campaigns: [] }));
+      const response = await getSettings(bffRequest("/api/settings", { cookies: SESSION }));
+      expect(response.status).toBe(200);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe("ログイン（API 1）", () => {
   const loginBody = JSON.stringify({ staff_id: "S001", password: "ramen-owner-2026" });
   const backendTokens = { access_token: "a", refresh_token: "r", staff_id: "S001", name: "店主" };

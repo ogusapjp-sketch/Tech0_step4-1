@@ -23,7 +23,10 @@ export type BackendCall = {
 const TOKEN_INVALID = { code: "TOKEN_INVALID", message: "認証が必要です" };
 const INTERNAL_ERROR = { code: "INTERNAL_ERROR", message: "処理に失敗しました。もう一度お試しください" };
 
-export const callBackend = (call: BackendCall, bearerToken?: string): Promise<Response> => {
+// FastAPI の応答を待つ時間（人間が決定）。超えたら中断し、呼び出し元の共通処理で 500 INTERNAL_ERROR にする
+const BACKEND_TIMEOUT_MS = 15_000;
+
+export const callBackend = async (call: BackendCall, bearerToken?: string): Promise<Response> => {
   // ブラウザから届いたヘッダは中継せず、Cookie から取り出したトークンだけを載せる
   const headers = new Headers();
   if (bearerToken) {
@@ -32,12 +35,20 @@ export const callBackend = (call: BackendCall, bearerToken?: string): Promise<Re
   if (call.body !== undefined) {
     headers.set("Content-Type", "application/json");
   }
-  return fetch(`${backendUrl()}${call.path}`, {
-    method: call.method,
-    headers,
-    body: call.body,
-    cache: "no-store",
-  });
+  const url = `${backendUrl()}${call.path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      method: call.method,
+      headers,
+      body: call.body,
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 // FastAPI の応答（ステータス・本文・Content-Type）をそのままブラウザへ返す

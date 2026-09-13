@@ -46,7 +46,8 @@ run_phase() {
 }
 
 status=0
-run_phase "1/3 通常（TEST_FIXED_NOW=2026-09-05T12:00:00）" "not ttl5 and not realtime" || status=1
-run_phase "2/3 IT-05（ACCESS_TOKEN_TTL_SECONDS=5）" "ttl5" ACCESS_TOKEN_TTL_SECONDS=5 || status=1
-run_phase "3/3 IT-33（TEST_FIXED_NOW 未設定）" "realtime" TEST_FIXED_NOW= || status=1
+run_phase "1/4 通常（TEST_FIXED_NOW=2026-09-05T12:00:00）" "not ttl5 and not realtime and not dbpause" || status=1
+run_phase "2/4 IT-05（ACCESS_TOKEN_TTL_SECONDS=5）" "ttl5" ACCESS_TOKEN_TTL_SECONDS=5 || status=1
+run_phase "3/4 IT-33（TEST_FIXED_NOW 未設定）" "realtime" TEST_FIXED_NOW= || status=1
+run_phase "4/4 IT-34（docker pause mysql）" "dbpause" || status=1
 exit $status

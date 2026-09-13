@@ -5,6 +5,7 @@ testpaths = ["tests/unit"]
 markers = [
     "ttl5: ACCESS_TOKEN_TTL_SECONDS=5 で起動した環境が必要（IT-05）",
     "realtime: TEST_FIXED_NOW を未設定にして起動した環境が必要（IT-33）",
+    "dbpause: MySQL コンテナを一時停止する（IT-34）。他のテストと同時に実行しない",
 ]
 
 [tool.coverage.run]

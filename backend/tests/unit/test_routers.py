@@ -317,6 +317,21 @@ def test_extra_transactions_concurrent_duplicate_on_save():
     assert body["details"] == {"transaction_id": 7}
 
 
+def test_extra_transactions_db_timeout_is_500_without_details():
+    # IT-34：保存中に DB が応答しなくなったら 500 INTERNAL_ERROR。SQL 文などの詳細は返さない
+    from sqlalchemy.exc import OperationalError
+
+    client, repos = make_client()
+    repos.transactions.raise_on_add = OperationalError(
+        "INSERT INTO `transaction` ...", {}, Exception("(2013, 'Lost connection to MySQL server during query (timed out)')")
+    )
+    response = client.post("/transactions", headers=auth(client), json=transaction_body())
+    body = assert_error(response, 500, "INTERNAL_ERROR")
+    assert body["message"] == "処理に失敗しました。もう一度お試しください"
+    assert "INSERT" not in response.text and "timed out" not in response.text
+    assert repos.transactions.saved == {}
+
+
 @pytest.mark.parametrize("body", [
     pytest.param(transaction_body(items=[]), id="IT-17-empty-items"),
     pytest.param(transaction_body(items=[{"product_code": "1001", "quantity": 1}, {"product_code": "1001", "quantity": 1}]), id="IT-37-duplicate-code"),

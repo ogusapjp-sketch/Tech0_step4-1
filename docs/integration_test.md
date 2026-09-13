@@ -1,11 +1,12 @@
 # 結合テスト手順書（test_spec.md 5.1）
 
-test_spec.md 5.1 の結合テスト（IT-01〜37）の実施方法。自動実行できるケースは pytest＋httpx で実行し、画面操作や障害の再現が必要なケースは手動で実施する。
+test_spec.md 5.1 の結合テスト（IT-01〜37）の実施方法。自動実行できるケースは pytest＋httpx で実行し、画面操作が必要なケースは手動で実施する。
 
 | 区分 | ケース | 方法 |
 |---|---|---|
 | 自動 | IT-01〜20、IT-29〜33、IT-35〜37 | `backend/tests/integration/`（第2章） |
-| 手動 | IT-21〜28、IT-34 | ブラウザと DB の参照（第3章） |
+| 自動＋手動 | IT-34 | API での再現は自動（第2章の 4/4）。画面での確認は手動（3.3） |
+| 手動 | IT-21〜28 | ブラウザと DB の参照（第3章） |
 
 ---
 
@@ -49,11 +50,11 @@ SELECT transaction_id, line_no, product_code, product_name, unit_price, quantity
 
 ---
 
-## 2. 自動実行（IT-01〜20、IT-29〜33、IT-35〜37）
+## 2. 自動実行（IT-01〜20、IT-29〜37）
 
 ### 2.1 一括実行
 
-IT-05 と IT-33 は backend の起動時の設定を変える必要があるため、スクリプトが backend だけを作り直しながら3回に分けて実行する。終了時（失敗時も）は backend を `.env` のとおりに戻す。
+IT-05 と IT-33 は backend の起動時の設定を変える必要があり、IT-34 は MySQL を一時停止するため、スクリプトが backend だけを作り直しながら4回に分けて実行する。終了時（失敗時も）は backend を `.env` のとおりに戻す。
 
 ```bash
 backend/tests/integration/run_all.sh
@@ -61,35 +62,39 @@ backend/tests/integration/run_all.sh
 
 | 回 | backend の設定 | 対象 | pytest のマーカー |
 |---|---|---|---|
-| 1/3 | `.env` のとおり | IT-01〜04、06〜20、29〜32、35〜37 | `not ttl5 and not realtime` |
-| 2/3 | `ACCESS_TOKEN_TTL_SECONDS=5` | IT-05 | `ttl5` |
-| 3/3 | `TEST_FIXED_NOW` 未設定（実時刻） | IT-33 | `realtime` |
+| 1/4 | `.env` のとおり | IT-01〜04、06〜20、29〜32、35〜37 | `not ttl5 and not realtime and not dbpause` |
+| 2/4 | `ACCESS_TOKEN_TTL_SECONDS=5` | IT-05 | `ttl5` |
+| 3/4 | `TEST_FIXED_NOW` 未設定（実時刻） | IT-33 | `realtime` |
+| 4/4 | `.env` のとおり（テスト中に `docker pause mysql`） | IT-34 | `dbpause` |
 
 ### 2.2 個別に実行する場合
 
 シェルの環境変数は `.env` より優先されるため、変数を付けて backend だけを作り直す。
 
 ```bash
-# 1/3 通常
-cd backend && .venv/bin/pytest tests/integration -m "not ttl5 and not realtime" -v && cd ..
+# 1/4 通常
+cd backend && .venv/bin/pytest tests/integration -m "not ttl5 and not realtime and not dbpause" -v && cd ..
 
-# 2/3 IT-05：アクセストークンの有効期間を5秒にして起動
+# 2/4 IT-05：アクセストークンの有効期間を5秒にして起動
 ACCESS_TOKEN_TTL_SECONDS=5 docker compose up -d --no-deps --force-recreate backend
 cd backend && .venv/bin/pytest tests/integration -m ttl5 -v && cd ..
 
-# 3/3 IT-33：TEST_FIXED_NOW を未設定にして起動
+# 3/4 IT-33：TEST_FIXED_NOW を未設定にして起動
 TEST_FIXED_NOW= docker compose up -d --no-deps --force-recreate backend
 cd backend && .venv/bin/pytest tests/integration -m realtime -v && cd ..
 
 # 元に戻す（.env のとおり）
 docker compose up -d --no-deps --force-recreate backend
+
+# 4/4 IT-34：MySQL を一時停止する。他のテストと同時に実行しない
+cd backend && .venv/bin/pytest tests/integration -m dbpause -v && cd ..
 ```
 
 ### 2.3 仕組み
 
 - 呼び出し先は BFF（`http://127.0.0.1:3000/api/...`）。IT-35 は FastAPI（`http://127.0.0.1:8000`）も確認する
 - DB の確認とデータの初期化は、アプリ用 DB ユーザー（DML 権限のみ）で `127.0.0.1:3306` に接続する。接続情報は `.env` から読む
-- 期待値は test_spec.md の表の値。IT-14〜16 は UT-B-19 と同じ明細（醤油850×2＋味玉120×3＋特製855×1、会員 M000001）
+- 期待値は test_spec.md の表の値。IT-14〜16 は UT-B-19 と同じ明細（醤油850×2＋味玉120×3＋特製855×1、会員 M000001）。IT-19・IT-33 は UT-B-18（醤油850×2、会員なし）、IT-34 は UAT-02（醤油1、会員なし）の明細を使う
 
 ---
 
@@ -205,30 +210,46 @@ docker compose up -d --no-deps --force-recreate backend
 
 ### 3.3 外部連携（IT-34）
 
-> **判断待ち**：test_spec.md の手順（`docker pause mysql` → 購入 → `docker unpause`）では、期待値「500、取引が残らない」にならないことを段階9で確認した。手順か設計のどちらを変えるかの判断が必要（下記「確認結果」）。判断が出るまで実施しない。
+DB が応答しなくなったときに、確定していないのに確定扱いになる・二重に確定される、が起きないこと（NFR-OPS-05）を確認する。
 
-#### test_spec.md の記載
+#### 前提となる設定（人間が決定）
 
-| 操作 | 期待値 |
-|---|---|
-| 購入ボタンを押す直前に `docker pause mysql` を実行し、押した後に `docker unpause` | 取引ヘッダも明細も残らない。500。購入リストは画面に保持 |
+| 対象 | 設定 | 超えたとき |
+|---|---|---|
+| FastAPI の DB 接続 | 読み書きのタイムアウト 10秒（`backend/app/db/session.py`） | 500 INTERNAL_ERROR。トランザクションはロールバック |
+| FastAPI の DB 接続 | 使う前の接続確認（pool_pre_ping）はしない。接続は240秒で入れ替える | — |
+| BFF が FastAPI を待つ時間 | 15秒（`frontend/src/lib/server/bff.ts`） | 500 INTERNAL_ERROR |
+| 画面 | 500 を受けたら「処理に失敗しました。もう一度お試しください」を表示し、購入リストを保持 | — |
 
-#### 確認結果（2026-09-14、段階9）
-
-API で同じ操作を再現した：ログイン → `docker pause mysql` → `POST /api/transactions`（醤油850×2、会員なし）→ 10秒後に `docker unpause mysql`。
-
-- 一時停止中、リクエストは失敗せずに待ち続けた
-- 再開後、**201 で確定し、取引ヘッダ1件・明細1件が保存された**（所要11秒）
-
-原因：`docker pause` は MySQL のプロセスを凍結するだけで接続は切れない。FastAPI の DB 接続にも BFF の中継にもタイムアウトを設けていないため、再開後にそのまま処理が進む。
-
-#### 実施手順（案。判断後に確定する）
+#### 手順
 
 | 手順 | 操作 | 確認点 |
 |---|---|---|
 | 1 | 1.2 で初期化し、S001 でログイン | レジ画面 |
-| 2 | 商品 `1001` を照会・追加 | 購入リストに1行 |
-| 3 | ターミナルで DB を止める（方法は判断による） | — |
-| 4 | 「購入」 | 「処理に失敗しました。もう一度お試しください」。ポップアップが出ない。購入リストが残っている |
-| 5 | DB を再開し、1.3 で参照 | 取引ヘッダも明細も増えていない |
-| 6 | もう一度「購入」 | 確定する（同じ冪等キーで再送され、取引は1件だけ） |
+| 2 | 商品 `1001` を照会・追加し、「会員なし」 | 購入リストに1行。税込 935円（UAT-02 の値） |
+| 3 | ターミナルで `docker pause mysql` | — |
+| 4 | 「購入」を押し、**10秒以上待つ** | 約10秒後に「処理に失敗しました。もう一度お試しください」。ポップアップは出ない。購入リストが残っている |
+| 5 | ターミナルで `docker unpause mysql` → 1.3 で DB を参照 | 取引ヘッダも明細も増えていない（しばらく待っても増えない） |
+| 6 | 同じ内容のまま、もう一度「購入」 | ポップアップに税込合計 935円 |
+| 7 | 1.3 で DB を参照 | 取引が1件だけ（ヘッダ1件・明細1件） |
+
+手順6は購入リストと会員を変えずに押す。同じ冪等キーで再送される（変えると新しいキーになる）。
+
+**期待値（人間が具体化した手順）**：docker pause mysql → 購入 → 10秒以上待って 500 を確認 → docker unpause → 同じ内容で再度購入 → 201、取引は1件。
+
+#### 確認結果（2026-09-14、段階9）
+
+同じ手順を BFF 経由の API で実行した。自動テスト（2.1 の 4/4）も合格。
+
+| 手順 | 結果 |
+|---|---|
+| `docker pause mysql` → `POST /api/transactions` | **500 INTERNAL_ERROR（10.0秒）**。FastAPI のログは `OperationalError (2013, 'Lost connection to MySQL server during query (The read operation timed out)')` |
+| `docker unpause mysql` の12秒後に DB を参照 | 取引ヘッダ 0件・明細 0件（再開後に保存されない） |
+| 同じ冪等キー・同じ内容で再度 `POST /api/transactions` | **201**（0.03秒） |
+| DB を参照 | 取引ヘッダ 1件・明細 1件 |
+
+#### 経緯
+
+- タイムアウトなし：一時停止中はリクエストが待ち続け、再開後に 201 で保存された（test_spec.md の期待値にならない）
+- 読み書き10秒＋pool_pre_ping：FastAPI は「接続確認の待ち10秒＋張り直しの応答待ち10秒」で 20秒後に 500。BFF が15秒で 500 を返した後に再開すると、FastAPI の処理が進んで保存された。PyMySQL は張り直しの応答待ちにも読み取りのタイムアウトを使うため、接続のタイムアウトでは短縮できない
+- pool_pre_ping をやめた（人間が決定）：FastAPI が10秒で 500 を返し、処理が残らなくなった

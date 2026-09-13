@@ -172,8 +172,10 @@ class InMemoryCampaignRepository:
 class InMemoryTransactionRepository:
     def __init__(self) -> None:
         self.saved: dict[int, NewTransaction] = {}
-        # True にすると、保存の瞬間に同じキーが先に確定された状況（同時確定）を再現する
+        # 取引IDを入れると、保存の瞬間に同じキーが先に確定された状況（同時確定）を再現する
         self.simulate_conflict_on_add_with_id: int | None = None
+        # 例外を入れると、保存時に DB のエラー（タイムアウトなど）が起きた状況を再現する
+        self.raise_on_add: Exception | None = None
 
     def find_id_by_idempotency_key(self, idempotency_key: str) -> int | None:
         for transaction_id, transaction in self.saved.items():
@@ -182,6 +184,8 @@ class InMemoryTransactionRepository:
         return None
 
     def add(self, transaction: NewTransaction) -> int:
+        if self.raise_on_add is not None:
+            raise self.raise_on_add
         if self.simulate_conflict_on_add_with_id is not None:
             raise IdempotencyKeyConflict(self.simulate_conflict_on_add_with_id)
         existing_id = self.find_id_by_idempotency_key(transaction.idempotency_key)

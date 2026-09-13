@@ -294,6 +294,28 @@ describe("購入確定", () => {
     expect(screen.getByRole("dialog", { name: "購入完了" })).toBeInTheDocument();
   });
 
+  it("test_extra_ 500（DB のタイムアウトなど）は文言を出してリストを保持し、再度の購入は同じ冪等キーで確定する（IT-34）", async () => {
+    mockedApi.postTransaction
+      .mockResolvedValueOnce(fail(500, "INTERNAL_ERROR"))
+      .mockResolvedValueOnce(ok({ transaction_id: 1, total: 935 } as never, 201));
+    await renderRegister();
+    await scan("1001");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "購入" }));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("処理に失敗しました。もう一度お試しください");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(rowOf(/醤油ラーメン/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "購入" })).toBeEnabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "購入" }));
+    });
+    expect(mockedApi.postTransaction.mock.calls.map((c) => c[0].idempotency_key)).toEqual(["key-1", "key-1"]);
+    expect(screen.getByRole("dialog", { name: "購入完了" })).toHaveTextContent("935円");
+  });
+
   it("test_extra_ 失敗の後に購入リストを変えたら、新しい冪等キーを作る", async () => {
     mockedApi.postTransaction.mockResolvedValue({ kind: "network" });
     await renderRegister();
