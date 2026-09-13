@@ -16,6 +16,8 @@ node_modules/
 .next/
 coverage/
 *.tsbuildinfo
+# next build が生成し、.next/ の型を参照する
+next-env.d.ts
 
 # OS
 .DS_Store
