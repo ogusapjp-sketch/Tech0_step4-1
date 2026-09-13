@@ -1,0 +1,15 @@
+# イメージに入れないもの。テスト・仮想環境・秘密情報
+.venv/
+tests/
+db/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+.env.*
+requirements-dev.txt
+pyproject.toml
+Dockerfile
+.dockerignore

@@ -29,7 +29,7 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | パッケージ | バージョン | 用途 | 既知の脆弱性 | 導入した段階 |
 |---|---|---|---|---|
 | fastapi | 0.141.1 | Web フレームワーク | なし | 段階8a |
-| uvicorn | 0.52.4 | ASGI サーバ | なし | 未導入（段階8c） |
+| uvicorn | 0.52.4 | ASGI サーバ（Docker イメージの起動コマンド） | なし | 段階8c |
 | SQLAlchemy | 2.0.52 | ORM | なし | 段階8a |
 | pydantic | 2.13.5 | 入力検証 | なし | 段階4 |
 | PyMySQL | 1.2.0 | MySQL 接続ドライバ | なし | 段階8a |
@@ -65,7 +65,8 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | idna | 3.19 | anyio | なし |
 | greenlet | 3.5.5 | SQLAlchemy（Linux の aarch64／x86_64 などでのみ。Mac の arm64 には入らないため、requirements.txt で環境マーカー付きで固定） | なし |
 | httpcore | 1.0.9 | httpx（開発用） | なし |
-| h11 | 0.16.0 | httpcore（開発用） | なし |
+| h11 | 0.16.0 | uvicorn（段階8c から本番用）、httpcore | なし |
+| click | 8.5.0 | uvicorn | なし |
 | certifi | 2026.7.22 | httpx（開発用） | なし |
 
 **段階8a の注意**：FastAPI の TestClient を使うと、Starlette 1.6 から「`httpx` ではなく `httpx2` を使う」旨の非推奨警告が出る。テストの動作には影響しない。`httpx2` は未承認のため、現時点では承認済みの `httpx` を使い続ける。
