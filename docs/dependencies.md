@@ -28,25 +28,27 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 
 | パッケージ | バージョン | 用途 | 既知の脆弱性 | 導入した段階 |
 |---|---|---|---|---|
-| fastapi | 0.141.1 | Web フレームワーク | なし | 未導入（段階8） |
-| uvicorn | 0.52.4 | ASGI サーバ | なし | 未導入（段階8） |
-| SQLAlchemy | 2.0.52 | ORM | なし | 未導入（段階8） |
+| fastapi | 0.141.1 | Web フレームワーク | なし | 段階8a |
+| uvicorn | 0.52.4 | ASGI サーバ | なし | 未導入（段階8c） |
+| SQLAlchemy | 2.0.52 | ORM | なし | 段階8a |
 | pydantic | 2.13.5 | 入力検証 | なし | 段階4 |
-| PyMySQL | 1.2.0 | MySQL 接続ドライバ | なし | 未導入（段階8） |
-| cryptography | 50.0.1 | PyMySQL が MySQL 8 の既定認証方式（caching_sha2_password）で使う | なし | 未導入（段階8） |
+| PyMySQL | 1.2.0 | MySQL 接続ドライバ | なし | 段階8a |
+| cryptography | 50.0.1 | PyMySQL が MySQL 8 の既定認証方式（caching_sha2_password）で使う | なし | 段階8a |
 | PyJWT | 2.14.0 | JWT の署名・検証 | なし | 段階5 |
 | argon2-cffi | 25.1.0 | パスワードハッシュ（Argon2id） | なし | 段階1 |
-| httpx | 0.28.1 | 結合テストの HTTP クライアント（開発用） | なし | 未導入（段階9） |
+| httpx | 0.28.1 | FastAPI の TestClient（段階8a）、結合テストの HTTP クライアント（段階9）。開発用 | なし | 段階8a |
 | pytest | 9.1.1 | テスト（開発用） | なし | 段階1 |
 | pytest-cov | 7.1.0 | カバレッジ（開発用） | なし | 段階1 |
 | pip-audit | 2.10.1 | 脆弱性検査（開発用・CI） | なし | 未導入（段階10） |
 
 ### 間接依存（導入済みのもの）
 
+脆弱性の確認日：段階8a の分は 2026-09-14。
+
 | パッケージ | バージョン | 依存元 | 既知の脆弱性 |
 |---|---|---|---|
 | argon2-cffi-bindings | 26.1.0 | argon2-cffi | なし |
-| cffi | 2.1.1 | argon2-cffi-bindings | なし |
+| cffi | 2.1.1 | argon2-cffi-bindings、cryptography | なし |
 | pycparser | 3.0 | cffi | なし |
 | coverage | 7.16.0 | pytest-cov | なし |
 | iniconfig | 2.3.0 | pytest | なし |
@@ -55,8 +57,18 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | Pygments | 2.21.0 | pytest | なし |
 | pydantic_core | 2.46.5 | pydantic | なし |
 | annotated-types | 0.8.0 | pydantic | なし |
-| typing-inspection | 0.4.4 | pydantic | なし |
-| typing_extensions | 4.16.0 | pydantic | なし |
+| typing-inspection | 0.4.4 | pydantic、fastapi | なし |
+| typing_extensions | 4.16.0 | pydantic、fastapi | なし |
+| starlette | 1.6.0 | fastapi | なし |
+| annotated-doc | 0.0.5 | fastapi | なし |
+| anyio | 4.15.1 | starlette | なし |
+| idna | 3.19 | anyio | なし |
+| greenlet | 3.5.5 | SQLAlchemy（Linux の aarch64／x86_64 などでのみ。Mac の arm64 には入らないため、requirements.txt で環境マーカー付きで固定） | なし |
+| httpcore | 1.0.9 | httpx（開発用） | なし |
+| h11 | 0.16.0 | httpcore（開発用） | なし |
+| certifi | 2026.7.22 | httpx（開発用） | なし |
+
+**段階8a の注意**：FastAPI の TestClient を使うと、Starlette 1.6 から「`httpx` ではなく `httpx2` を使う」旨の非推奨警告が出る。テストの動作には影響しない。`httpx2` は未承認のため、現時点では承認済みの `httpx` を使い続ける。
 
 ### ファイルの分け方
 

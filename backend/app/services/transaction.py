@@ -25,6 +25,14 @@ class TotalsMismatch(Exception):
         self.server_totals = server_totals
 
 
+class IdempotencyKeyConflict(Exception):
+    """同じ idempotency_key の取引が保存済み（同時に確定された場合を含む）。409 DUPLICATE。"""
+
+    def __init__(self, transaction_id: int) -> None:
+        super().__init__(f"transaction already exists: {transaction_id}")
+        self.transaction_id = transaction_id
+
+
 # --- confirm が使うリポジトリの形（実装は段階8） ---------------------------------
 
 @dataclass(frozen=True)
@@ -82,7 +90,10 @@ class TransactionRepository(Protocol):
     def find_id_by_idempotency_key(self, idempotency_key: str) -> int | None: ...
 
     def add(self, transaction: NewTransaction) -> int:
-        """ヘッダと明細を1つのトランザクションで保存し、取引IDを返す。"""
+        """ヘッダと明細を1つのトランザクションで保存し、取引IDを返す。
+
+        同じ idempotency_key が保存済みなら IdempotencyKeyConflict を投げる。
+        """
         ...
 
 

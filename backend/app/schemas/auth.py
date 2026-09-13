@@ -17,3 +17,11 @@ class LoginRequest(BaseModel):
 
     staff_id: StaffId
     password: Password
+
+
+class LogoutRequest(BaseModel):
+    """BFF が Cookie のリフレッシュトークンを本文で渡す（design.md 5.2 API 3）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: Annotated[str, StringConstraints(strict=True, min_length=1)]

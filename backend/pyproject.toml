@@ -6,3 +6,5 @@ testpaths = ["tests/unit"]
 [tool.coverage.run]
 branch = true
 source = ["app"]
+# DB に接続するコード（接続・リポジトリ）は単体テストのカバレッジ対象外とし、結合テストで確認する（人間が決定）
+omit = ["*/app/db/*", "*/app/repositories/*"]

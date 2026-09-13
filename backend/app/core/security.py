@@ -11,6 +11,14 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from app.core.clock import JST
 
 JWT_ALGORITHM = "HS256"
+TOKEN_EXPIRED = "TOKEN_EXPIRED"
+TOKEN_INVALID = "TOKEN_INVALID"
+
+
+class TokenError(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 # argon2-cffi の既定パラメータ（Argon2id）
 _password_hasher = PasswordHasher()
@@ -42,6 +50,29 @@ def create_access_token(staff_id: str, now: datetime, secret: str, ttl_seconds: 
         "exp": int((issued_at + timedelta(seconds=ttl_seconds)).timestamp()),
     }
     return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
+
+
+def verify_access_token(token: str, secret: str, now: datetime) -> str:
+    """担当者ID（sub）を返す。期限は now（トークン用 Clock の値）で判定する。"""
+    try:
+        claims = jwt.decode(
+            token,
+            secret,
+            algorithms=[JWT_ALGORITHM],
+            # 期限は PyJWT の実時刻ではなくトークン用 Clock で判定する
+            options={"require": ["sub", "exp"], "verify_exp": False, "verify_iat": False},
+        )
+    except jwt.InvalidTokenError as exc:
+        raise TokenError(TOKEN_INVALID) from exc
+
+    staff_id = claims["sub"]
+    expires_at = claims["exp"]
+    if not isinstance(staff_id, str) or type(expires_at) is not int:
+        raise TokenError(TOKEN_INVALID)
+    # exp は「その時刻以降は受け付けない」
+    if int(now.replace(tzinfo=JST).timestamp()) >= expires_at:
+        raise TokenError(TOKEN_EXPIRED)
+    return staff_id
 
 
 def generate_refresh_token() -> str:

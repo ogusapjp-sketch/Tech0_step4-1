@@ -3,7 +3,7 @@
 import pytest
 
 from app.services.pricing import Totals
-from app.services.transaction import TotalsMismatch, TransactionService
+from app.services.transaction import IdempotencyKeyConflict, TotalsMismatch, TransactionService
 
 SERVER = Totals(subtotal=2915, discount_total=145, tax_amount=277, total=3047)
 
@@ -25,3 +25,10 @@ def test_UT_B_81_85_mismatch(client):
         TransactionService.verify_client_totals(SERVER, client)
     # 409 TOTALS_MISMATCH の details.server_totals に使う（design.md 5.2）
     assert excinfo.value.server_totals == Totals(subtotal=2915, discount_total=145, tax_amount=277, total=3047)
+
+
+def test_extra_idempotency_key_conflict_holds_existing_transaction_id():
+    # 409 DUPLICATE の details.transaction_id に使う（design.md 5.2）
+    with pytest.raises(IdempotencyKeyConflict) as excinfo:
+        raise IdempotencyKeyConflict(12)
+    assert excinfo.value.transaction_id == 12
