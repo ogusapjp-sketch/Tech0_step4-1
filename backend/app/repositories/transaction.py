@@ -18,7 +18,13 @@ from app.models import (
     TransactionModel,
 )
 from app.services.pricing import Campaign
-from app.services.transaction import IdempotencyKeyConflict, NewTransaction, ProductRecord
+from app.services.transaction import (
+    CampaignRecord,
+    IdempotencyKeyConflict,
+    MemberRecord,
+    NewTransaction,
+    ProductRecord,
+)
 
 # Lv2 の税率区分は standard のみ（design.md 4.2）
 STANDARD_TAX_CATEGORY = "standard"
@@ -49,6 +55,13 @@ class SqlMemberRepository:
 
     def exists(self, member_id: str) -> bool:
         return self._session.get(MemberModel, member_id) is not None
+
+    def get(self, member_id: str) -> MemberRecord | None:
+        row = self._session.get(MemberModel, member_id)
+        if row is None:
+            return None
+        # 電話番号・住所は取り出さない（NFR-SEC-09）
+        return MemberRecord(member_id=row.member_id, name=row.name)
 
 
 class SqlTaxRateRepository:
@@ -85,6 +98,23 @@ class SqlCampaignRepository:
                 discount_value=row.discount_value,
                 start_date=row.start_date,
                 end_date=row.end_date,
+            )
+            for row in rows
+        ]
+
+    def find_active_on(self, day: date) -> list[CampaignRecord]:
+        rows = self._session.scalars(
+            select(DiscountCampaignModel)
+            .where(DiscountCampaignModel.start_date <= day, DiscountCampaignModel.end_date >= day)
+            .order_by(DiscountCampaignModel.campaign_id)
+        )
+        return [
+            CampaignRecord(
+                campaign_id=row.campaign_id,
+                name=row.name,
+                product_code=row.product_code,
+                discount_type=row.discount_type,
+                discount_value=row.discount_value,
             )
             for row in rows
         ]
