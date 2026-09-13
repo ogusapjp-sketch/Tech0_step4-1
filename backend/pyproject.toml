@@ -1,7 +1,11 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
-# 結合テスト（tests/integration）は Docker 起動後に明示して実行する
+# 結合テスト（tests/integration）は Docker 起動後に明示して実行する（tests/integration/run_all.sh）
 testpaths = ["tests/unit"]
+markers = [
+    "ttl5: ACCESS_TOKEN_TTL_SECONDS=5 で起動した環境が必要（IT-05）",
+    "realtime: TEST_FIXED_NOW を未設定にして起動した環境が必要（IT-33）",
+]
 
 [tool.coverage.run]
 branch = true
