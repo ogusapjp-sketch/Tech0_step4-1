@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 PRODUCTION = "production"
-DEFAULT_APP_ENV = "development"
 DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 3600
 
 
@@ -35,7 +34,8 @@ def _required(env: Mapping[str, str], key: str) -> str:
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
-    app_env = env.get("APP_ENV") or DEFAULT_APP_ENV
+    # 未設定・空なら本番扱い。設定漏れのときに安全側（docs 無効、テスト用の環境変数を無視）に倒す
+    app_env = env.get("APP_ENV") or PRODUCTION
 
     # テスト用の環境変数は本番では無視する（design.md 6.3）
     access_token_ttl_seconds = DEFAULT_ACCESS_TOKEN_TTL_SECONDS

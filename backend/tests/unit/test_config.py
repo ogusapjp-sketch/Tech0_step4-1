@@ -37,12 +37,16 @@ def test_extra_access_token_ttl_defaults_to_3600(ttl):
     assert load_settings(env).access_token_ttl_seconds == 3600
 
 
-def test_extra_app_env_unset_is_not_production():
-    # 業務用 Clock（段階1）と同じく、production 以外は開発扱い
+@pytest.mark.parametrize("app_env", [None, ""])
+def test_extra_app_env_unset_is_production(app_env):
+    # 人間が決定：APP_ENV が未設定・空なら本番扱い（docs 無効、テスト用の環境変数を無視）。業務用 Clock と同じ判定
     env = {k: v for k, v in BASE_ENV.items() if k != "APP_ENV"}
+    if app_env is not None:
+        env["APP_ENV"] = app_env
     settings = load_settings(env)
-    assert settings.app_env == "development"
-    assert settings.is_production is False
+    assert settings.app_env == "production"
+    assert settings.is_production is True
+    assert settings.access_token_ttl_seconds == 3600
 
 
 @pytest.mark.parametrize("missing", ["DATABASE_URL", "JWT_SECRET_KEY"])

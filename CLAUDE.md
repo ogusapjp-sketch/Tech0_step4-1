@@ -34,16 +34,22 @@
 ```
 backend/
   app/
-    main.py            # FastAPI エントリ。APP_ENV=production で docs を無効化
+    main.py            # FastAPI エントリ（create_app）。APP_ENV が production または未設定で docs を無効化
+    dependencies.py    # ルータが使う依存関数（アクセストークンの検証、サービスの組み立て）
     core/clock.py      # 業務用 Clock（TEST_FIXED_NOW 対応）とトークン用 Clock（実時刻）
+    core/config.py     # 環境変数の読み込み。APP_ENV が未設定なら本番扱い
+    core/errors.py     # ErrorResponse とエラーコード（design.md 6.2）、例外ハンドラ
     core/security.py   # JWT 発行・検証、Argon2id
+    db/session.py      # SQLAlchemy の接続（単体テストのカバレッジ対象外）
     models/            # SQLAlchemy モデル（design.md 4.2）
-    schemas/           # Pydantic（design.md 5.2 と同名）
+    repositories/      # リポジトリの SQLAlchemy 実装（単体テストのカバレッジ対象外。結合テストで確認）
+    schemas/           # Pydantic（design.md 5.2 と同名。出力スキーマは responses.py）
     services/
       pricing.py       # PricingService（apply_discount / calculate）
       auth.py          # AuthService（staff_repo, token_repo, business_clock, token_clock, settings を注入）
       transaction.py   # TransactionService（verify_client_totals / confirm）
     routers/           # auth, settings, members, products, transactions
+  db/init_app_user.sh  # アプリ用 DB ユーザー（DML 権限のみ）の作成。MySQL コンテナの初期化時に実行
   tests/
     unit/              # test_spec.md 4.1 のケース（UT-B-nn をテスト名に含める）
     integration/       # test_spec.md 5.1 のケース（IT-nn）。Docker 起動後に httpx で実行

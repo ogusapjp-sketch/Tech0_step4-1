@@ -34,7 +34,7 @@ services:
     build: ./backend
     environment:
       TZ: Asia/Tokyo
-      APP_ENV: development
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: mysql+pymysql://${APP_DB_USER:-pos_app}:${APP_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-pos}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-3600}
@@ -51,7 +51,7 @@ services:
     build: ./frontend
     environment:
       TZ: Asia/Tokyo
-      APP_ENV: development
+      APP_ENV: ${APP_ENV:-production}
       BACKEND_URL: http://backend:8000
     depends_on:
       - backend

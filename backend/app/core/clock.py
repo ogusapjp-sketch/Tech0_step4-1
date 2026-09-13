@@ -45,9 +45,12 @@ def _parse_fixed_now(value: str) -> datetime:
 
 
 def get_business_clock(env: Mapping[str, str] | None = None) -> Clock:
-    """業務用 Clock。APP_ENV=production では TEST_FIXED_NOW を無視する。"""
+    """業務用 Clock。本番では TEST_FIXED_NOW を無視する。
+
+    APP_ENV が未設定・空のときも本番扱いにする（設定漏れで安全側に倒す。core/config.py と同じ判定）。
+    """
     env = os.environ if env is None else env
-    if env.get("APP_ENV") == "production":
+    if (env.get("APP_ENV") or "production") == "production":
         return SystemClock()
     fixed_now = env.get("TEST_FIXED_NOW")
     if not fixed_now:
