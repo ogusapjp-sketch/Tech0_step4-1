@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+# 結合テスト（tests/integration）は Docker 起動後に明示して実行する
+testpaths = ["tests/unit"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]

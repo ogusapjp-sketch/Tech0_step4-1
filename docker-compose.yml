@@ -1,0 +1,59 @@
+# ローカル開発・結合テスト用（design.md 2.1、2.3）。本番は Azure Container Apps
+# 使い方：.env.example をコピーして .env を作ってから docker compose up
+# backend / frontend の Dockerfile は段階8で作成する
+
+services:
+  mysql:
+    image: mysql:8.0.46
+    # IT-34 の手順（docker pause mysql）に合わせたコンテナ名
+    container_name: mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      TZ: Asia/Tokyo
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-pos}
+      APP_DB_USER: ${APP_DB_USER:-pos_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}
+    volumes:
+      # 初回起動時にファイル名順で実行される（テーブル作成 → アプリ用ユーザー作成 → テストデータ投入）
+      - ./backend/tests/fixtures/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./backend/db/init_app_user.sh:/docker-entrypoint-initdb.d/02_init_app_user.sh:ro
+      - ./backend/tests/fixtures/seed.sql:/docker-entrypoint-initdb.d/03_seed.sql:ro
+    ports:
+      # 結合テスト（IT-29〜35）で DB を直接参照するため、ホストの 127.0.0.1 にだけ公開する
+      - "127.0.0.1:3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    build: ./backend
+    environment:
+      TZ: Asia/Tokyo
+      APP_ENV: development
+      DATABASE_URL: mysql+pymysql://${APP_DB_USER:-pos_app}:${APP_DB_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-pos}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-3600}
+      TEST_FIXED_NOW: ${TEST_FIXED_NOW:-}
+      CORS_ALLOW_ORIGINS: http://frontend:3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      # 開発時に /docs を参照するため、ホストの 127.0.0.1 にだけ公開する（design.md 7.4）
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build: ./frontend
+    environment:
+      TZ: Asia/Tokyo
+      APP_ENV: development
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:3000:3000"

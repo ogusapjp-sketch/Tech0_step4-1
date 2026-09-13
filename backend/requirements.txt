@@ -1,0 +1,6 @@
+# 本番に必要なパッケージ（design.md 7.6）。バージョンは docs/dependencies.md で承認済みのもの
+# 段階ごとに、使い始めたパッケージを追加する
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+cffi==2.1.1
+pycparser==3.0
