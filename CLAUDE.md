@@ -36,12 +36,12 @@ backend/
   app/
     main.py            # FastAPI エントリ。APP_ENV=production で docs を無効化
     core/clock.py      # 業務用 Clock（TEST_FIXED_NOW 対応）とトークン用 Clock（実時刻）
-    core/security.py   # JWT 発行・検証、bcrypt
+    core/security.py   # JWT 発行・検証、Argon2id
     models/            # SQLAlchemy モデル（design.md 4.2）
     schemas/           # Pydantic（design.md 5.2 と同名）
     services/
       pricing.py       # PricingService（apply_discount / calculate）
-      auth.py          # AuthService（repo, clock を注入）
+      auth.py          # AuthService（staff_repo, token_repo, business_clock, token_clock, settings を注入）
       transaction.py   # TransactionService（verify_client_totals / confirm）
     routers/           # auth, settings, members, products, transactions
   tests/
@@ -78,7 +78,7 @@ docs/dependencies.md        # 採用パッケージのバージョンと脆弱�
 
 - テスト関数名にケース ID を含める（例：`test_UT_B_08_percent_rounding_per_unit`）。仕様書にケース ID がないテストは `test_extra_` で始める
 - `parametrize` に `test_spec.md` の表の値をそのまま写す
-- 単体テストは DB を使わない。`AuthService` はインメモリの偽リポジトリと固定 `Clock` を注入する
+- 単体テストは DB を使わない。`AuthService` はインメモリの偽リポジトリと固定 `Clock` を注入する。ロック判定は業務用 Clock、JWT・リフレッシュトークンの期限はトークン用 Clock（実時刻）で判定する
 - 結合テストは `docker compose up` した環境に対して httpx で実行する
 
 ## Git の運用

@@ -18,7 +18,7 @@
 | v0.1 | 2026-09-13 | 初版ドラフト |
 | v1.0 | 2026-09-13 | 全体確認を実施し確定。日付変更後の再ログイン手順を追加、単価を含むリクエストの拒否を確定、UT-B-86 を追加、ST-19 を削除、設計仕様書 v1.1 との整合を反映 |
 | v1.1 | 2026-09-13 | テスト実装可否の確認により、4.3「テスト実装のための補足」を追加。企画重複の UT-B-87 を追加。IT-05・IT-34 の実施方法を明記。設計仕様書 v1.2 との整合を反映 |
-| v1.2 | 2026-09-13 | 実装着手時の確認により改訂。設計仕様書 v1.3 に合わせて Argon2id・タイムゾーン・Clock 分離・期間判定の一本化を反映。コード例のシグネチャと日付型を修正。IT-33 に実施条件、IT-36・37 を追加。4.3 の reducer 仕様と AuthService の注入を詳細化。ケース ID のないテストの命名規則を追加 |
+| v1.2 | 2026-09-13 | 実装着手時の確認により改訂。AuthService は業務用・トークン用の2つの Clock を受け取る。設計仕様書 v1.3 に合わせて Argon2id・タイムゾーン・Clock 分離・期間判定の一本化を反映。コード例のシグネチャと日付型を修正。IT-33 に実施条件、IT-36・37 を追加。4.3 の reducer 仕様と AuthService の注入を詳細化。ケース ID のないテストの命名規則を追加 |
 
 ---
 
@@ -498,7 +498,7 @@ describe("calcTotals", () => {
 | `Item` | `product_code: str, unit_price: int, quantity: int` | dataclass |
 | `Campaign` | `product_code, discount_type, discount_value, start_date, end_date` | dataclass。日付は `date` |
 
-**差し替え点**：`AuthService(staff_repo: StaffRepository, token_repo: TokenRepository, clock: Clock, settings: AuthSettings)` の形で注入する。`settings` は JWT 署名鍵と有効期間を持つ。単体テストでは2つのリポジトリをインメモリの偽実装、`clock` を任意の日時を返す偽実装に差し替える。UT-B-73／74（29分59秒／30分00秒）は `clock` を進めて検証する。ロック発生時に `failed_count` は 0 に戻る（設計仕様書 7.1）。`PricingService` は DB を参照しないため差し替え不要。
+**差し替え点**：`AuthService(staff_repo: StaffRepository, token_repo: TokenRepository, business_clock: Clock, token_clock: Clock, settings: AuthSettings)` の形で注入する。ロック判定（UT-B-69〜74）は `business_clock`、JWT とリフレッシュトークンの期限（UT-B-76〜78）は `token_clock` で判定する。`settings` は JWT 署名鍵と有効期間を持つ。単体テストでは2つのリポジトリをインメモリの偽実装、`clock` を任意の日時を返す偽実装に差し替える。UT-B-73／74（29分59秒／30分00秒）は `clock` を進めて検証する。ロック発生時に `failed_count` は 0 に戻る（設計仕様書 7.1）。`PricingService` は DB を参照しないため差し替え不要。
 
 **Pydantic スキーマ**（設計仕様書 5.2 の TypeScript 型と同名）：`LoginRequest`、`TransactionRequest`、`TransactionItem`、`ClientTotals`。パスパラメータの商品コード・会員IDは `validate_product_code(str)`／`validate_member_id(str)` の関数で検証し、これを UT-B-40〜51・86 の対象とする。すべてのスキーマは `extra="forbid"`。
 
