@@ -5,7 +5,7 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | 簡易POSアプリ改（Lv2）設計仕様書 |
-| 版 | v1.2 |
+| 版 | v1.3 |
 | 作成日 | 2026-09-06 |
 | 作成者 | おぐちゃん（Tech0 Step4 / 12期） |
 | 上位文書 | 簡易POSアプリ改（Lv2）要件定義書 v1.0 |
@@ -19,6 +19,7 @@
 | v1.0 | 2026-09-06 | 全体確認を実施し確定。税率を万分率の整数に変更、会員ID・商品コードの判別方式を追加、API 2 の入出力を追加 |
 | v1.1 | 2026-09-13 | テスト設計での指摘により、クラス図 `PricingService.apply_discount` の引数に `member` を追加。6.1 に空白の扱い（フロントで trim、バックは拒否）と未知フィールドの拒否を追記 |
 | v1.2 | 2026-09-13 | テスト実装可否の確認により、`calculate` に `now` を追加、複数企画の重複時は値引き額が大きい方を適用（6.1）、テスト用の環境変数（6.3）を追加 |
+| v1.3 | 2026-09-13 | 実装着手時の確認（Claude Code からの18件の指摘）により改訂。パスワードハッシュを Argon2id に変更、タイムゾーンを日本時間に固定、Clock を業務用とトークン用に分離、フロントの期間判定を廃止、ロック時の失敗回数リセット、未定義だったエラー応答（存在しない会員ID・明細の重複・トークンなし）、ログアウト時のトークン受け渡し、ローカルの Cookie 属性、DDL の管理方法を追記 |
 
 ---
 
@@ -89,7 +90,7 @@ flowchart LR
 | バックエンド | FastAPI ／ Python | 前提条件（変更不可） |
 | ORM | SQLAlchemy 2.x | FastAPI で標準的。パラメータバインドにより SQL インジェクションを構造的に防ぐ（第7.5節） |
 | バリデーション | Pydantic v2 | FastAPI 標準。リクエストの型・範囲検証をスキーマで宣言する |
-| 認証 | PyJWT ／ bcrypt | JWT の署名・検証とパスワードハッシュ化 |
+| 認証 | PyJWT ／ Argon2id（argon2-cffi） | JWT の署名・検証とパスワードハッシュ化。bcrypt は72バイトの入力上限がありパスワード128文字の要件と両立しないため Argon2id を採用 |
 | バーコード読取 | ブラウザの Barcode Detection API（非対応ブラウザでは ZXing 系ライブラリにフォールバック） | カメラ付きデバイスでの読み取り（前提条件） |
 | DB | Azure Database for MySQL Flexible Server | 前提条件（変更不可） |
 
@@ -109,6 +110,8 @@ flowchart LR
 | FastAPI | Azure Container Apps | **内部 Ingress**（同一環境内からのみ到達可）。最小レプリカ 1 |
 | MySQL | Azure Database for MySQL Flexible Server | Container Apps 環境からのみ接続を許可。パブリックアクセスは無効 |
 | 秘密情報 | Container Apps のシークレット | DB接続文字列、JWT署名鍵を環境変数として注入。コードやリポジトリには含めない（NFR-SEC-10） |
+| タイムゾーン | 全コンテナに `TZ=Asia/Tokyo` | 日時はすべて日本時間で扱い、タイムゾーン情報を持たない値として保存・判定する。1店舗の国内システムのため UTC 変換を挟まない |
+| テーブル作成 | `schema.sql` を管理者権限で実行 | アプリ用 DB ユーザーは DML 権限のみ（7.5）のため、DDL はアプリから実行しない。ローカルは MySQL コンテナの初期化時、Azure は管理者が手動で実行する |
 
 **Azure Functions（従量課金）を採用しない理由**：アイドル後の初回リクエストでコールドスタートが発生し、NFR-PERF-03（久しぶりのアクセスでも極端に遅くならない）を満たさないため。
 
@@ -514,7 +517,7 @@ erDiagram
 |---|---|---|---|---|
 | staff_id | VARCHAR(20) | 不可 | — | PK。ログインID |
 | name | VARCHAR(50) | 不可 | — | 氏名 |
-| password_hash | VARCHAR(255) | 不可 | — | bcrypt ハッシュ（NFR-SEC-03） |
+| password_hash | VARCHAR(255) | 不可 | — | Argon2id ハッシュ（NFR-SEC-03） |
 | failed_count | INT | 不可 | 0 | 連続認証失敗回数（NFR-SEC-04） |
 | locked_until | DATETIME | 可 | NULL | ロック解除日時。NULL はロックなし |
 | is_active | BOOLEAN | 不可 | TRUE | 無効化フラグ |
@@ -672,8 +675,8 @@ type LoginResponse = {
 #### 3. POST /api/auth/logout
 
 ```typescript
-// 入力：なし（Cookie のリフレッシュトークンを失効させる）
-// 出力（204）：なし
+// 入力：なし（BFF が Cookie のリフレッシュトークンを取り出し、FastAPI へはボディ { refresh_token } で渡す）
+// 出力（204）：なし。両 Cookie を削除
 ```
 
 #### 4. GET /api/settings
@@ -681,7 +684,7 @@ type LoginResponse = {
 ```typescript
 type Settings = {
   tax_rate_bp: number;              // 万分率の整数。10% なら 1000
-  campaigns: DiscountCampaign[];    // 本日有効な企画のみ
+  campaigns: DiscountCampaign[];    // 本日有効な企画のみ。フロントは期間判定を行わず、この配列をそのまま使う
 };
 type DiscountCampaign = {
   campaign_id: number;
@@ -750,7 +753,7 @@ type TransactionResponse = {
     discount_amount: number;
   }[];
 };
-// エラー：400 VALIDATION_ERROR ／ 404 PRODUCT_NOT_FOUND ／
+// エラー：400 VALIDATION_ERROR（items 内の商品コード重複を含む）／ 404 PRODUCT_NOT_FOUND ／ 404 MEMBER_NOT_FOUND ／
 //        409 TOTALS_MISMATCH（server_totals を付加）／ 409 DUPLICATE（既存の取引IDを返す）
 ```
 
@@ -824,12 +827,12 @@ type TransactionResponse = {
 
 | HTTP | コード | 発生条件 | 画面表示 | 出典 |
 |---|---|---|---|---|
-| 400 | VALIDATION_ERROR | 入力値が第6.1節の制約を満たさない | 該当項目の制約を表示 | NFR-SEC-08 |
+| 400 | VALIDATION_ERROR | 入力値が第6.1節の制約を満たさない。購入確定の items に同一商品コードが複数ある場合を含む | 該当項目の制約を表示 | NFR-SEC-08 |
 | 401 | AUTH_FAILED | 担当者IDが存在しない、無効化済み、またはパスワードが不正。いずれも同一の応答とする | 「担当者IDまたはパスワードが正しくありません」 | NFR-SEC-05 |
 | 401 | TOKEN_EXPIRED | アクセストークン期限切れ（BFF が自動更新。ブラウザには通常届かない） | — | — |
-| 401 | TOKEN_INVALID | トークンが無効・失効済み | ログイン画面へ遷移 | NFR-SEC-06 |
+| 401 | TOKEN_INVALID | トークンが無効・失効済み、またはトークンなしで認証必須 API を呼んだ | ログイン画面へ遷移 | NFR-SEC-06 |
 | 423 | AUTH_LOCKED | 10回連続失敗でロック中 | 「一定時間後に再試行してください」 | NFR-SEC-04 |
-| 404 | MEMBER_NOT_FOUND | 会員IDに該当する会員がない | 「該当する会員が存在しません」 | Lv1 2.6 |
+| 404 | MEMBER_NOT_FOUND | 会員IDに該当する会員がない（会員照会、および購入確定の member_id） | 「該当する会員が存在しません」 | Lv1 2.6 |
 | 404 | PRODUCT_NOT_FOUND | 商品コードが未登録または販売終了 | 「商品がマスタ未登録です」 | Lv1 2.2 |
 | 409 | TOTALS_MISMATCH | フロント計算値がバックの再計算と不一致 | 「金額の再計算が必要です。画面を更新してください」 | NFR-SEC-07 |
 | 409 | DUPLICATE | 同一 idempotency_key の再送 | 既存の取引として完了扱い（エラー表示しない） | NFR-OPS-05 |
@@ -854,7 +857,7 @@ type TransactionResponse = {
 | `TEST_FIXED_NOW` | 設定すると、その日時を現在時刻として扱う（例：`2026-09-07T21:59:00`）。期間判定・取引日時・ロック解除判定に適用 | 未設定（実時刻） |
 | `ACCESS_TOKEN_TTL_SECONDS` | アクセストークンの有効期間。テストで期限切れを短時間に再現するために短縮する | 3600 |
 
-実装上は、現在時刻を返す `Clock` を1箇所に集約し、`TEST_FIXED_NOW` の有無で実時刻か固定値かを切り替える。業務ロジックは `datetime.now()` を直接呼ばず、必ず `Clock` を経由する。
+実装上は、現在時刻を返す `Clock` を2種類に分ける。**業務用 Clock** は `TEST_FIXED_NOW` が設定されていればその値を返し、期間判定・取引日時・ロック解除判定に使う。**トークン用 Clock** は常に実時刻を返し、JWT の発行・検証に使う（固定時刻でトークンを扱うと全リクエストが期限切れになるか、逆に期限切れを再現できないため）。業務ロジックは `datetime.now()` を直接呼ばず、必ず Clock を経由する。`TEST_FIXED_NOW` にタイムゾーン指定がない場合は日本時間とみなす。
 
 ---
 
@@ -871,10 +874,10 @@ type TransactionResponse = {
 | トークン形式 | JWT（HS256）。署名鍵は FastAPI の環境変数から注入し、コードに含めない。BFF（Next.js）は署名鍵を持たず、トークンを検証せずに中継するのみ |
 | アクセストークン | 有効期間60分。`sub` に担当者IDを持つ。FastAPI は認証必須の API（第5.1節 API 3〜7）でこれを検証する |
 | リフレッシュトークン | 有効期間12時間（1営業日）。ランダム値を発行し、SHA-256 ハッシュを DB に保存する。更新のたびに新しいトークンを発行し、旧トークンを失効させる（ローテーション） |
-| 保管場所 | 両トークンとも httpOnly・Secure・SameSite=Strict の Cookie。ブラウザの JavaScript から読めず（XSS 対策）、他サイトからのリクエストには送信されない（CSRF 対策） |
+| 保管場所 | 両トークンとも httpOnly・Secure・SameSite=Strict の Cookie。ブラウザの JavaScript から読めず（XSS 対策）、他サイトからのリクエストには送信されない（CSRF 対策）。Secure 属性は `APP_ENV=production` でのみ付与し、ローカル（http://localhost）では外す |
 | 失効 | ログアウト時に DB の `revoked` を TRUE にする。アカウントロック時も同様。アクセストークンは最大60分で自然失効する |
-| パスワード | bcrypt でハッシュ化。12文字以上、文字種の強制なし（NFR-SEC-02、03） |
-| 試行制限 | 10回連続失敗で30分ロック。`locked_until` で管理し、成功時に `failed_count` をリセット（NFR-SEC-04） |
+| パスワード | Argon2id でハッシュ化（argon2-cffi、既定パラメータ）。12〜128文字、文字種の強制なし（NFR-SEC-02、03） |
+| 試行制限 | 10回連続失敗で30分ロック。`locked_until` で管理し、**ロック発生時と成功時**に `failed_count` を 0 に戻す。解除後は再び10回から数える（NFR-SEC-04） |
 
 **認可**：本システムの利用者はレジ担当者のみで、ロールの区別はない。認可は「有効なアクセストークンを持つこと」に一本化する。店長のマスタ操作は DB 直接メンテ（BR-11）のため、アプリ側に管理者権限を設けない。
 
@@ -908,7 +911,7 @@ flowchart LR
 | 項目 | 設計 |
 |---|---|
 | 正となる計算 | バックエンドの `PricingService`。マスタから単価・税率・値引き企画を取得して再計算する |
-| フロントの役割 | 同じ規則（第6.1節）で計算し画面に表示する。確定時に `client_totals` として送る |
+| フロントの役割 | 同じ規則（第6.1節）で計算し画面に表示する。ただし**期間判定は行わない**。`GET /settings` が返す「本日有効な企画」をそのまま適用する。確定時に `client_totals` として送る |
 | 照合 | バックエンドの再計算結果と `client_totals` の4値（税抜合計・値引き合計・税額・税込合計）を比較。1つでも異なれば 409 TOTALS_MISMATCH で確定しない |
 | 単価の扱い | リクエストに単価を含めない。バックエンドは常にマスタの単価を使う |
 

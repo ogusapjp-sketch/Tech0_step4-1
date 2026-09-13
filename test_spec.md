@@ -5,10 +5,10 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | 簡易POSアプリ改（Lv2）テスト仕様書 |
-| 版 | v1.1 |
+| 版 | v1.2 |
 | 作成日 | 2026-09-13 |
 | 作成者 | おぐちゃん（Tech0 Step4 / 12期） |
-| 上位文書 | 要求一覧（Lv1／Lv2）、要件定義書 v1.0、設計仕様書 v1.2 |
+| 上位文書 | 要求一覧（Lv1／Lv2）、要件定義書 v1.0、設計仕様書 v1.3 |
 | ステータス | 確定 |
 
 ## 改訂履歴
@@ -18,6 +18,7 @@
 | v0.1 | 2026-09-13 | 初版ドラフト |
 | v1.0 | 2026-09-13 | 全体確認を実施し確定。日付変更後の再ログイン手順を追加、単価を含むリクエストの拒否を確定、UT-B-86 を追加、ST-19 を削除、設計仕様書 v1.1 との整合を反映 |
 | v1.1 | 2026-09-13 | テスト実装可否の確認により、4.3「テスト実装のための補足」を追加。企画重複の UT-B-87 を追加。IT-05・IT-34 の実施方法を明記。設計仕様書 v1.2 との整合を反映 |
+| v1.2 | 2026-09-13 | 実装着手時の確認により改訂。設計仕様書 v1.3 に合わせて Argon2id・タイムゾーン・Clock 分離・期間判定の一本化を反映。コード例のシグネチャと日付型を修正。IT-33 に実施条件、IT-36・37 を追加。4.3 の reducer 仕様と AuthService の注入を詳細化。ケース ID のないテストの命名規則を追加 |
 
 ---
 
@@ -134,7 +135,7 @@ V字モデルでは、左側の各工程で決定したことを、対応する�
 
 ### 3.1 担当者（staff）
 
-| staff_id | name | パスワード（平文、テスト用） | 状態 | 用途 |
+| staff_id | name | パスワード（平文。seed.sql には Argon2id ハッシュを記載） | 状態 | 用途 |
 |---|---|---|---|---|
 | S001 | 店主 | `ramen-owner-2026` | 有効 | 通常ログイン |
 | S002 | アルバイトA | `part-timer-0001` | 有効 | 通常ログイン（2人目） |
@@ -185,7 +186,9 @@ V字モデルでは、左側の各工程で決定したことを、対応する�
 | 5 | 端数検証用 | 1004 | percent | 10 | 2026-09-01 | 2026-09-30 |
 | 6 | 値引き上限検証用 | 2002 | amount | 150 | 2026-09-08 | 2026-09-30 |
 
-**データの初期化**：ロックや取引の蓄積が後続に影響するため、各テストレベルの開始時、および S004・取引データを使うケースの前にデータを初期状態へ戻す。
+**データの初期化**：ロックや取引の蓄積が後続に影響するため、各テストレベルの開始時、および S004・取引データを使うケースの前にデータを初期状態へ戻す。`seed.sql` の先頭で全テーブルを空にしてから投入する。
+
+**タイムゾーン**：日時はすべて日本時間（設計仕様書 2.3）。`TEST_FIXED_NOW` の値も日本時間で指定する。
 
 **テスト実施日の基準**：期間判定を含むテストは、システム日時を **2026-09-05** に固定して実施する（企画1〜3・5が有効、企画4・6は期間外）。期間境界のテストでは日時を個別に指定する。日時の固定は環境変数 `TEST_FIXED_NOW`（設計仕様書 6.3）で行い、Azure 検証環境ではリビジョンの環境変数を更新して反映する。
 
@@ -220,6 +223,8 @@ V字モデルでは、左側の各工程で決定したことを、対応する�
 - 同一商品に複数の企画が重なる場合は、**値引き額が大きい方を1つだけ**適用する（設計仕様書 6.1）
 
 **合否判定基準（人間が決定）**：全ケース合格。カバレッジは Statements・Branch ともに 80% 以上。
+
+**本書にケース ID のないテスト**（Clock など、カバレッジのために必要なもの）は追加してよい。テスト名を `test_extra_` で始め、本書のケースと区別する。
 
 テスト基準日は **2026-09-05**（企画1〜3・5 が有効）。期間境界のケースは日付を個別に指定する。
 
@@ -351,15 +356,15 @@ V字モデルでは、左側の各工程で決定したことを、対応する�
 
 ```python
 # tests/unit/test_pricing_discount.py
-from datetime import datetime
+from datetime import date, datetime
 import pytest
 from app.services.pricing import PricingService, Campaign, Item
 
 BASE = datetime(2026, 9, 5)
 C1 = Campaign(product_code="2001", discount_type="amount", discount_value=20,
-              start_date="2026-09-01", end_date="2026-09-07")
+              start_date=date(2026, 9, 1), end_date=date(2026, 9, 7))
 C5 = Campaign(product_code="1004", discount_type="percent", discount_value=10,
-              start_date="2026-09-01", end_date="2026-09-30")
+              start_date=date(2026, 9, 1), end_date=date(2026, 9, 30))
 
 @pytest.mark.parametrize("case_id, item, member, campaigns, now, expected", [
     ("UT-B-01", Item("2001", 120, 3), None,  [C1], BASE, 0),
@@ -370,19 +375,19 @@ C5 = Campaign(product_code="1004", discount_type="percent", discount_value=10,
     ("UT-B-08", Item("1004", 855, 3), "M1",  [C5], BASE, 255),
 ])
 def test_apply_discount(case_id, item, member, campaigns, now, expected):
-    assert PricingService().apply_discount(item, campaigns, member, now) == expected
+    assert PricingService().apply_discount(item, member, campaigns, now) == expected
 
 def test_UT_B_16_unknown_discount_type():
-    bad = Campaign("2001", "rate", 10, "2026-09-01", "2026-09-07")
+    bad = Campaign("2001", "rate", 10, date(2026, 9, 1), date(2026, 9, 7))
     with pytest.raises(ValueError):
-        PricingService().apply_discount(Item("2001", 120, 1), [bad], "M1", BASE)
+        PricingService().apply_discount(Item("2001", 120, 1), "M1", [bad], BASE)
 ```
 
 ### 4.2 フロントエンド（jest）
 
 #### 4.2.1 calcTotals — 金額計算
 
-バックエンドの `calculate` と**同じ入力・同じ期待値**で検証する（UT-B-18〜28 に対応）。両実装が一致しなければ照合（7.3）が成立しない。
+バックエンドの `calculate` と**同じ入力・同じ期待値**で検証する（UT-B-18〜28 に対応）。両実装が一致しなければ照合（7.3）が成立しない。フロントは期間判定を行わないため、企画は「有効なもの」として渡す（設計仕様書 7.3）。
 
 | ID | 対応 | 入力 | 期待値 | 結果 |
 |---|---|---|---|---|
@@ -449,28 +454,26 @@ def test_UT_B_16_unknown_discount_type():
 // __tests__/calcTotals.test.ts
 import { calcTotals } from "@/lib/pricing";
 
-const C1 = { product_code: "2001", discount_type: "amount", discount_value: 20,
-             start_date: "2026-09-01", end_date: "2026-09-07" } as const;
-const C5 = { product_code: "1004", discount_type: "percent", discount_value: 10,
-             start_date: "2026-09-01", end_date: "2026-09-30" } as const;
-const NOW = new Date("2026-09-05T12:00:00");
+// GET /settings が返す「本日有効な企画」をそのまま渡す。フロントは期間判定をしない
+const C1 = { campaign_id: 1, name: "常連感謝", product_code: "2001", discount_type: "amount", discount_value: 20 } as const;
+const C5 = { campaign_id: 5, name: "端数検証", product_code: "1004", discount_type: "percent", discount_value: 10 } as const;
 
 describe("calcTotals", () => {
   it("UT-F-01 非会員・醤油×2 → (1700, 0, 170, 1870)", () => {
-    const r = calcTotals([{ code: "1001", unitPrice: 850, qty: 2 }], null, [], 1000, NOW);
+    const r = calcTotals([{ code: "1001", name: "醤油ラーメン", unitPrice: 850, qty: 2 }], null, [], 1000);
     expect(r).toEqual({ subtotal: 1700, discountTotal: 0, taxAmount: 170, total: 1870 });
   });
   it("UT-F-02 会員・複数明細 → (2915, 145, 277, 3047)", () => {
     const items = [
-      { code: "1001", unitPrice: 850, qty: 2 },
-      { code: "2001", unitPrice: 120, qty: 3 },
-      { code: "1004", unitPrice: 855, qty: 1 },
+      { code: "1001", name: "醤油ラーメン", unitPrice: 850, qty: 2 },
+      { code: "2001", name: "味玉", unitPrice: 120, qty: 3 },
+      { code: "1004", name: "特製ラーメン", unitPrice: 855, qty: 1 },
     ];
-    const r = calcTotals(items, "M000001", [C1, C5], 1000, NOW);
+    const r = calcTotals(items, "M000001", [C1, C5], 1000);
     expect(r).toEqual({ subtotal: 2915, discountTotal: 145, taxAmount: 277, total: 3047 });
   });
   it("UT-F-03 値引き後に課税 → 税額 30（36 ではない）", () => {
-    const r = calcTotals([{ code: "2001", unitPrice: 120, qty: 3 }], "M000001", [C1], 1000, NOW);
+    const r = calcTotals([{ code: "2001", name: "味玉", unitPrice: 120, qty: 3 }], "M000001", [C1], 1000);
     expect(r.taxAmount).toBe(30);
   });
 });
@@ -495,7 +498,7 @@ describe("calcTotals", () => {
 | `Item` | `product_code: str, unit_price: int, quantity: int` | dataclass |
 | `Campaign` | `product_code, discount_type, discount_value, start_date, end_date` | dataclass。日付は `date` |
 
-**差し替え点**：`AuthService(repo: StaffRepository, clock: Clock)` の形で注入する。単体テストでは `repo` をインメモリの偽実装、`clock` を任意の日時を返す偽実装に差し替える。UT-B-73／74（29分59秒／30分00秒）は `clock` を進めて検証する。`PricingService` は DB を参照しないため差し替え不要。
+**差し替え点**：`AuthService(staff_repo: StaffRepository, token_repo: TokenRepository, clock: Clock, settings: AuthSettings)` の形で注入する。`settings` は JWT 署名鍵と有効期間を持つ。単体テストでは2つのリポジトリをインメモリの偽実装、`clock` を任意の日時を返す偽実装に差し替える。UT-B-73／74（29分59秒／30分00秒）は `clock` を進めて検証する。ロック発生時に `failed_count` は 0 に戻る（設計仕様書 7.1）。`PricingService` は DB を参照しないため差し替え不要。
 
 **Pydantic スキーマ**（設計仕様書 5.2 の TypeScript 型と同名）：`LoginRequest`、`TransactionRequest`、`TransactionItem`、`ClientTotals`。パスパラメータの商品コード・会員IDは `validate_product_code(str)`／`validate_member_id(str)` の関数で検証し、これを UT-B-40〜51・86 の対象とする。すべてのスキーマは `extra="forbid"`。
 
@@ -503,26 +506,28 @@ describe("calcTotals", () => {
 
 | 対象 | シグネチャ |
 |---|---|
-| `calcTotals` | `(items: CartLine[], memberId: string \| null, campaigns: Campaign[], taxRateBp: number, now: Date) => Totals` |
-| `classifyCode` | `(raw: string) => "member" \| "product" \| "invalid"`。内部で trim してから判定 |
+| `calcTotals` | `(items: CartLine[], memberId: string \| null, campaigns: Campaign[], taxRateBp: number) => Totals`。`campaigns` は `GET /settings` が返す有効な企画。期間判定はしない |
+| `classifyCode` | `(raw: string) => "member" \| "product" \| "invalid"`。内部で trim してから判定。長さ上限（20文字）も確認する |
 | `cartReducer` | `(state: CartState, action: CartAction) => CartState` |
 
-`CartState`：`{ lines: CartLine[], selectedCode: string \| null, memberId: string \| null, error: "QUANTITY_LIMIT" \| "LINE_LIMIT" \| null }`
+`CartLine`：`{ code: string, name: string, unitPrice: number, qty: number }`
+
+`CartState`：`{ lines: CartLine[], selectedCode: string \| null, memberId: string \| null, error: "QUANTITY_LIMIT" \| "LINE_LIMIT" \| null }`。`error` は次に成功した操作で `null` に戻す
 
 `CartAction`：
 
 | アクション | 内容 | 対応ケース |
 |---|---|---|
-| `ADD_PRODUCT { product }` | 追加または数量+1。99なら `error = "QUANTITY_LIMIT"`。50行なら `error = "LINE_LIMIT"`。選択は解除 | UT-F-19〜22、31〜33 |
+| `ADD_PRODUCT { product }` | 追加または数量+1。99なら `error = "QUANTITY_LIMIT"`。50行のとき新しい商品なら `error = "LINE_LIMIT"`（既存商品の +1 は許可）。選択は解除 | UT-F-19〜22、31〜33 |
 | `SELECT_LINE { code }` | 選択（排他） | UT-F-23〜24 |
-| `REMOVE_SELECTED` | 選択行を削除し、選択解除 | UT-F-25 |
-| `SET_QUANTITY { qty }` | 1〜99 のみ受理。範囲外は state を変えない。選択は維持 | UT-F-26〜30 |
+| `REMOVE_SELECTED` | 選択行を削除し、選択解除。未選択なら何もしない | UT-F-25 |
+| `SET_QUANTITY { qty }` | 1〜99 のみ受理。範囲外は state を変えない。未選択なら何もしない。選択は維持 | UT-F-26〜30 |
 | `SET_MEMBER { memberId }` | 会員を設定（null で会員なし） | — |
 | `RESET` | 初期状態に戻す | UT-F-34 |
 
 #### テストデータの投入
 
-第3章のデータは `tests/fixtures/seed.sql` として用意する。担当者のパスワードは投入時に bcrypt でハッシュ化する（平文は 3.1 の値）。各テストレベルの開始時に `seed.sql` を再投入して初期化する。
+第3章のデータは `tests/fixtures/seed.sql` として用意する。担当者のパスワードは 3.1 の平文から事前に計算した Argon2id ハッシュを記載する。テーブルは `schema.sql`（管理者権限で実行）で作成し、`seed.sql` は先頭で全テーブルを空にしてから投入する。各テストレベルの開始時に `seed.sql` を再投入して初期化する。
 
 ---
 
@@ -565,6 +570,8 @@ describe("calcTotals", () => {
 | IT-18 | 7 transactions | 異常 | 商品コード 9999 を含む | 404 `PRODUCT_NOT_FOUND`。取引は保存されない | 部分保存しない | |
 | IT-19 | 7 transactions | 正常 | member_id = null | 201。値引き 0。DB の member_id が NULL | 会員なし取引 | |
 | IT-20 | 共通 | 異常 | 未知のエンドポイント `/api/xxx` | 404。スタックトレースなし | エラー形式 | |
+| IT-36 | 7 transactions | 異常 | member_id = M999999（形式は正しいが未登録） | 404 `MEMBER_NOT_FOUND`。取引は保存されない | 外部キー違反を 500 にしない | |
+| IT-37 | 7 transactions | 異常 | items に商品コード 1001 が2行ある | 400 `VALIDATION_ERROR` | フロントが集約済みの前提を検証 | |
 
 #### 5.1.2 状態遷移 — 会計の流れ
 
@@ -589,7 +596,7 @@ describe("calcTotals", () => {
 | IT-30 | マスタ変更後の履歴 | IT-14 の後、醤油ラーメンの単価を 950 に変更し、IT-14 の取引を再参照 | 明細の unit_price は 850 のまま | |
 | IT-31 | 税率変更後の履歴 | 税率マスタに「翌日から 1200」を追加し、IT-14 の取引を再参照 | tax_rate_bp は 1000 のまま | |
 | IT-32 | 担当者の記録 | S002 でログインして確定 | transaction.staff_id = S002 | |
-| IT-33 | 日時の記録 | 確定直後に参照 | transacted_at がサーバ時刻と一致（±5秒） | |
+| IT-33 | 日時の記録 | `TEST_FIXED_NOW` を**未設定**にして起動し、確定直後に参照 | transacted_at が実時刻と一致（±5秒） | |
 | IT-34 | トランザクション | 購入ボタンを押す直前に `docker pause mysql` を実行し、押した後に `docker unpause` | 取引ヘッダも明細も残らない。500。購入リストは画面に保持 | |
 | IT-35 | 更新・削除 API の不在 | 取引の PUT／DELETE を送る | 405 または 404。取引は変化しない | |
 
@@ -639,7 +646,7 @@ describe("calcTotals", () => {
 
 | ID | 要件 | 分類 | 方法 | 期待値 | 環境 | 結果 |
 |---|---|---|---|---|---|---|
-| ST-30 | SEC-01 | 異常 | Cookie なしで `/api/products/1001` | 401。商品情報が返らない | Docker | |
+| ST-30 | SEC-01 | 異常 | Cookie なしで `/api/products/1001` | 401 `TOKEN_INVALID`。商品情報が返らない | Docker | |
 | ST-31 | SEC-07 | 異常 | 購入確定の client_totals を改変（total を −1000） | 409。取引は保存されない | Docker | |
 | ST-32 | SEC-07 | 異常 | items に `unit_price: 1` を含めて送信 | 400 `VALIDATION_ERROR`。取引は保存されない | Docker | |
 | ST-33 | SEC-08 | 異常 | 商品コードに `1001' OR '1'='1` | 400。DB エラーにならない | Docker | |
@@ -731,7 +738,7 @@ UAT-05 は非会員のため、冷やし中華の企画4（8/31 終了）は日�
 | REQ-02 会員カード | FR-002 | API 5、6.1 コード体系 | B-46〜52、F-10〜18 | 08〜10 | 03〜05 | 03、04、12 |
 | REQ-03 商品コード手入力 | FR-004〜006 | API 6、3.1 | B-40〜45 | 11〜13 | 08〜09 | 07 |
 | REQ-04 税抜・税込表示 | FR-009 | 6.1 計算規則 | B-18〜28、F-01〜07 | 14 | 20 | 02、15 |
-| REQ-05 購入確定 | FR-010 | 3.2.3、API 7 | B-80〜85 | 14〜19 | 21〜22 | 02、13 |
+| REQ-05 購入確定 | FR-010 | 3.2.3、API 7 | B-80〜85 | 14〜19、36〜37 | 21〜22 | 02、13 |
 | REQ-06 リセット・再開 | FR-011 | 3.1 | F-34 | 21、26 | 23 | 08 |
 | REQ-07 履歴保存 | FR-010 | 4.2 transaction、4.1 スナップショット | — | 29〜35 | 21 | 09 |
 | REQ-08 税率可変 | FR-009、FR-012 | 4.2 tax_rate | B-24〜26、F-05 | 31 | 24〜25 | 10 |
@@ -768,10 +775,10 @@ UAT-05 は非会員のため、冷やし中華の企画4（8/31 終了）は日�
 | レベル | 件数 | 構成比 |
 |---|---|---|
 | 単体テスト | 128（B 87、F 41） | 約64% |
-| 結合テスト | 35 | 約18% |
+| 結合テスト | 37 | 約18% |
 | 機能テスト | 40（機能24、非機能16。ST-19 は重複のため欠番） | 約20% |
 | ユーザーテスト | 18 | 約9% |
-| 合計 | 221 | |
+| 合計 | 223 | |
 
 テストピラミッド（単体70：統合20：E2E 10）にほぼ沿った構成である。
 
@@ -820,7 +827,7 @@ UAT-05 は非会員のため、冷やし中華の企画4（8/31 終了）は日�
 - 講義資料に沿った章立てと、観点×技法の表の構成
 - 因子・水準・期待値の**案**の作成（決定は人間）
 - 計算規則からの期待値の算出と算出過程の提示
-- 221件のテストケース表への展開、ID付与、トレーサビリティ表の作成
+- 223件のテストケース表への展開、ID付与、トレーサビリティ表の作成
 - pytest／jest のコード例（ケース表の値を写す形）
 
 ### 学び
