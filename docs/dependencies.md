@@ -31,7 +31,7 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | fastapi | 0.141.1 | Web フレームワーク | なし | 未導入（段階8） |
 | uvicorn | 0.52.4 | ASGI サーバ | なし | 未導入（段階8） |
 | SQLAlchemy | 2.0.52 | ORM | なし | 未導入（段階8） |
-| pydantic | 2.13.5 | 入力検証 | なし | 未導入（段階4） |
+| pydantic | 2.13.5 | 入力検証 | なし | 段階4 |
 | PyMySQL | 1.2.0 | MySQL 接続ドライバ | なし | 未導入（段階8） |
 | cryptography | 50.0.1 | PyMySQL が MySQL 8 の既定認証方式（caching_sha2_password）で使う | なし | 未導入（段階8） |
 | PyJWT | 2.14.0 | JWT の署名・検証 | なし | 未導入（段階5） |
@@ -53,6 +53,10 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | packaging | 26.3 | pytest | なし |
 | pluggy | 1.6.0 | pytest | なし |
 | Pygments | 2.21.0 | pytest | なし |
+| pydantic_core | 2.46.5 | pydantic | なし |
+| annotated-types | 0.8.0 | pydantic | なし |
+| typing-inspection | 0.4.4 | pydantic | なし |
+| typing_extensions | 4.16.0 | pydantic | なし |
 
 ### ファイルの分け方
 
