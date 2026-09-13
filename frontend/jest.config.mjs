@@ -6,6 +6,9 @@ const createJestConfig = nextJest({ dir: "./" });
 export default createJestConfig({
   // 画面コンポーネントのテスト（段階8）はファイル単位で jsdom に切り替える
   testEnvironment: "node",
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
+  // __tests__/testSupport.ts はテストデータの共通部品で、テストファイルではない
+  testPathIgnorePatterns: ["/node_modules/", "<rootDir>/__tests__/testSupport.ts"],
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
   },

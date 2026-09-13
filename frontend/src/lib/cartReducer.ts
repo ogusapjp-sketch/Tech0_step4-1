@@ -27,9 +27,9 @@ export type CartAction =
   | { type: "SET_MEMBER"; memberId: string | null }
   | { type: "RESET" };
 
-const QUANTITY_MIN = 1;
-const QUANTITY_MAX = 99;
-const LINES_MAX = 50;
+export const QUANTITY_MIN = 1;
+export const QUANTITY_MAX = 99;
+export const LINES_MAX = 50;
 
 export const initialCartState: CartState = {
   lines: [],

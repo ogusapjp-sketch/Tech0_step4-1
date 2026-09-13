@@ -16,7 +16,12 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 |---|---|---|---|
 | Python | 3.11（Docker イメージ `python:3.11.16-slim`） | 2026-09-13 | 承認済み |
 | MySQL | 8.0（Docker イメージ `mysql:8.0.46`） | 2026-09-13 | 承認済み |
-| Node.js | 24 | — | バージョンは承認済み。Docker イメージは段階8で提案 |
+| Node.js | 24（Docker イメージ `node:24.21.0-slim`、Debian 12 bookworm） | 2026-09-14 | 承認済み。導入は段階8e |
+
+**`node:24.21.0-slim` の確認（段階8e）**：Docker Scout は Docker Hub へのログインが必要なため使わず、次の2点で確認した。
+
+- Node.js 本体：nodejs.org のリリース一覧で、24.21.0（2026-09-07）が 24 系の最新。これより後にセキュリティリリースはない（直近のセキュリティリリースは 24.18.1）
+- OS パッケージ：イメージ内で `apt list --upgradable` を実行し、`libpcre2-8-0` にセキュリティ更新（10.42-1 → 10.42-1+deb12u1）があることを確認。OSV の Debian 12 の情報では、10.42-1 に PCRE2 の境界外読み書きの脆弱性（DEBIAN-CVE-2026-86145 など6件）がある。`frontend/Dockerfile` で `apt-get upgrade` を実行して更新を取り込む
 
 ローカルの単体テストは `backend/.venv`（Anaconda の Python 3.11.7 から作成）で実行する。
 
@@ -93,12 +98,12 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | @types/node | 24.13.4 | 型定義（Node 24 に合わせる） | なし | 段階3 |
 | @types/react | 19.3.0 | 型定義 | なし | 段階3 |
 | @types/react-dom | 19.3.0 | 型定義 | なし | 段階3 |
-| jest-environment-jsdom | 30.5.1 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
-| @testing-library/react | 16.3.3 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
-| @testing-library/dom | 10.4.1 | @testing-library/react の peer 依存 | なし | 未導入（段階8） |
-| @testing-library/jest-dom | 7.0.1 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
-| @zxing/browser | 0.2.1 | バーコード読取のフォールバック（Code128） | なし | 未導入（段階8） |
-| @zxing/library | 0.23.0 | @zxing/browser の依存 | なし | 未導入（段階8） |
+| jest-environment-jsdom | 30.5.1 | 画面コンポーネントのテスト | なし | 段階8e |
+| @testing-library/react | 16.3.3 | 画面コンポーネントのテスト | なし | 段階8e |
+| @testing-library/dom | 10.4.1 | @testing-library/react の peer 依存 | なし | 段階8e |
+| @testing-library/jest-dom | 7.0.1 | 画面コンポーネントのテスト | なし | 段階8e |
+| @zxing/browser | 0.2.1 | バーコード読取のフォールバック（Code128） | なし | 段階8e |
+| @zxing/library | 0.23.0 | @zxing/browser の依存 | なし | 段階8e |
 
 **TypeScript を 7 系にしない理由**：最新は 7.0.2 だが、7 系は Go への書き直し版で従来のコンパイラ API を公開していない。ts-jest は `typescript <7` を要求し、Next.js の型チェックも従来の API を使うため、6 系の最新（6.0.3）を採用した。
 

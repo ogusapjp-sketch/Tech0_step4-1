@@ -36,7 +36,7 @@ const discountFor = (line: CartLine, campaign: DiscountCampaign): number => {
 };
 
 /** 明細の値引き額（数量分の合計）。複数の企画が重なる場合は値引き額が大きい方を1つだけ適用する */
-const calcLineDiscount = (
+export const calcLineDiscount = (
   line: CartLine,
   memberId: string | null,
   campaigns: readonly DiscountCampaign[],

@@ -1,0 +1,25 @@
+.scanner {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.video {
+  width: 100%;
+  max-height: 14rem;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #1f2933;
+  border-radius: 0.5rem;
+}
+
+.status {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #52606d;
+}
+
+.unavailable {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #b42318;
+}
