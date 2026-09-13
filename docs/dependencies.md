@@ -63,4 +63,26 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 
 ## フロントエンド（npm）
 
-段階3で提案する。
+承認日：2026-09-13。脆弱性の確認日：2026-09-13。バージョンは `frontend/package.json` に `^` なしで記載し、`package-lock.json` で間接依存まで固定する。
+
+| パッケージ | バージョン | 用途 | 既知の脆弱性 | 導入した段階 |
+|---|---|---|---|---|
+| next | 16.3.5 | フレームワーク（画面・BFF）。`next/jest` でテストの TypeScript を変換 | なし | 段階3 |
+| react | 19.3.0 | UI | なし | 段階3 |
+| react-dom | 19.3.0 | UI | なし | 段階3 |
+| typescript | 6.0.3 | 型チェック（`npm run typecheck`） | なし | 段階3 |
+| jest | 30.5.1 | テスト | なし | 段階3 |
+| @types/jest | 30.0.0 | 型定義 | なし | 段階3 |
+| @types/node | 24.13.4 | 型定義（Node 24 に合わせる） | なし | 段階3 |
+| @types/react | 19.3.0 | 型定義 | なし | 段階3 |
+| @types/react-dom | 19.3.0 | 型定義 | なし | 段階3 |
+| jest-environment-jsdom | 30.5.1 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
+| @testing-library/react | 16.3.3 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
+| @testing-library/dom | 10.4.1 | @testing-library/react の peer 依存 | なし | 未導入（段階8） |
+| @testing-library/jest-dom | 7.0.1 | 画面コンポーネントのテスト | なし | 未導入（段階8） |
+| @zxing/browser | 0.2.1 | バーコード読取のフォールバック（Code128） | なし | 未導入（段階8） |
+| @zxing/library | 0.23.0 | @zxing/browser の依存 | なし | 未導入（段階8） |
+
+**TypeScript を 7 系にしない理由**：最新は 7.0.2 だが、7 系は Go への書き直し版で従来のコンパイラ API を公開していない。ts-jest は `typescript <7` を要求し、Next.js の型チェックも従来の API を使うため、6 系の最新（6.0.3）を採用した。
+
+**導入時の確認（段階3）**：`npm install` 後の `npm audit` は 0 件。install 時に `glob@10.5.0` の非推奨警告が出る。これは jest → @jest/transform → babel-plugin-istanbul → test-exclude の間接依存で、開発用（テスト実行時のみ）。OSV で `glob@10.5.0` に既知の脆弱性がないことを確認した。jest 側の更新を待ち、個別には上書きしない。
