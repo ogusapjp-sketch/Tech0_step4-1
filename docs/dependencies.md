@@ -149,16 +149,26 @@ push と pull request のたびに実行する。どれか1つでも失敗した
 
 | 対象 | ディレクトリ | 間隔 | 追加の設定 |
 |---|---|---|---|
-| pip | `/backend` | 週次（Asia/Tokyo） | `pydantic` と `pydantic-core` を1つの PR にまとめる（pydantic が pydantic-core の版を固定で要求するため） |
+| pip | `/backend` | 週次（Asia/Tokyo） | `pydantic-core` の更新を無視する（下記「pydantic を更新するときの運用」）。`pydantic` と `pydantic-core` のグループ設定も残す |
 | npm | `/frontend` | 週次（Asia/Tokyo） | `typescript` の 7 系を無視する（上記「TypeScript を 7 系にしない理由」）。`@types/node` のメジャー更新を無視する（実行環境の Node 24 に合わせる） |
 
-**閉じた更新 PR（2026-09-14、人間が判断）**：初回の実行で作られた次の3件は、マージせずに理由をコメントして閉じ、上表の設定を追加した。
+**pydantic を更新するときの運用（2026-09-14、人間が決定）**
+
+pydantic は pydantic-core の版を `==` で固定して要求する（例：pydantic 2.13.5 は `pydantic-core==2.46.5`）。pydantic-core は pydantic より先に新しい版が出ることがあり、単体で上げると依存を満たせない。そのため Dependabot では pydantic-core の更新を無視し、pydantic の更新 PR だけを受け取る。
+
+1. Dependabot が pydantic の更新 PR を作る（`backend/requirements.txt` の `pydantic` だけが変わる）
+2. CI の backend ジョブ「依存パッケージを入れる」（`pip check`）が失敗したら、新しい pydantic が要求する pydantic-core の版を確認する（PyPI の `https://pypi.org/pypi/pydantic/<版>/json` の `requires_dist`、または `pip check` の出力）
+3. その PR のブランチで `backend/requirements.txt` の `pydantic_core==` を要求された版に書き換えてコミットする。あわせて OSV で脆弱性を確認し、本書の表を更新する
+4. CI がすべて成功したことを確認してからマージする
+
+**閉じた更新 PR（2026-09-14、人間が判断）**：次の4件は、マージせずに理由をコメントして閉じ、上表の設定を追加した。
 
 | PR | 内容 | CI | 閉じた理由 |
 |---|---|---|---|
 | #1 | pydantic-core 2.46.5 → 2.49.0 | 失敗（`pip check`） | pydantic 2.13.5 が pydantic-core 2.46.5 を必須にしており、単独では更新できない |
 | #2 | @types/node 24.13.4 → 26.5.1 | 成功 | 実行環境が Node 24 のため、型定義も 24 系に合わせる |
 | #3 | typescript 6.0.3 → 7.0.2 | 成功 | 7 系は Next.js のビルドが使うコンパイラ API がない。CI が成功したのは `next build` を実行していなかったためで、CI に `next build` を追加した |
+| #4 | pydantic-core 2.46.5 → 2.49.0（pydantic グループ） | 失敗（`pip check`） | pydantic の最新版が 2.13.5 のままで、グループにしても pydantic-core だけが上がった。pydantic-core の更新を無視する設定に変更した |
 
 Dependabot の PR でも CI が実行されるため、テスト・型チェック・脆弱性検査に合格した更新だけを取り込む。メジャー更新は design.md 7.6 の方針（セキュリティ修正を除き、実装期間中は行わない）に従って判断する。
 

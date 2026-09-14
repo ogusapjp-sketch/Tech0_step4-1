@@ -15,6 +15,11 @@ updates:
           - "pydantic"
           - "pydantic-core"
           - "pydantic_core"
+    ignore:
+      # pydantic-core は pydantic より先に新しい版が出ることがあり、単体で上げると pydantic の要求（== 固定）を満たせない。
+      # pydantic の更新 PR で CI が失敗したら、PR の中で pydantic-core を手で合わせる（docs/dependencies.md）
+      - dependency-name: "pydantic-core"
+      - dependency-name: "pydantic_core"
 
   # フロントエンド：frontend/package.json・package-lock.json
   - package-ecosystem: "npm"
