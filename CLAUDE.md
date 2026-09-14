@@ -7,8 +7,8 @@
 
 | 文書 | 役割 | 実装で参照する箇所 |
 |---|---|---|
-| `design.md`（v1.3） | どう作るか | 2.1 構成、3.3 クラス図、4.2 テーブル定義、5 API、6.1 計算規則・上下限、6.2 エラーコード、6.3 テスト用環境変数、7 セキュリティ |
-| `test_spec.md`（v1.2） | どう検証するか | 3 テストデータ、4 単体テストのケース表、4.3 関数シグネチャ・reducer 定義、5 結合テスト |
+| `design.md`（v1.4） | どう作るか | 2.1 構成、3.3 クラス図、4.2 テーブル定義、5 API、6.1 計算規則・上下限、6.2 エラーコード、6.3 テスト用環境変数、7 セキュリティ |
+| `test_spec.md`（v1.3） | どう検証するか | 3 テストデータ、4 単体テストのケース表、4.3 関数シグネチャ・reducer 定義、5 結合テスト |
 | `requirements.md`（v1.0） | なぜそうするか | 迷ったときの根拠。3.4 業務ルール |
 
 ## 守ること
@@ -99,4 +99,6 @@ main に直接コミットし、段階ごとに push する。コミットメッ
 
 - この Mac には Anaconda（`base` 環境）が入っているが、**バックエンドは `backend/.venv` に専用の仮想環境を作って使う**。`python3 -m venv backend/.venv` で作成し、`backend/.venv/bin/pip` と `backend/.venv/bin/pytest` を使う。conda の環境にはパッケージを入れない
 - `.venv/` と `node_modules/` は `.gitignore` に入れる
-- Docker は順序9（結合テスト）まで不要。`docker-compose.yml` は順序1で作成するが、起動確認は Docker インストール後に行う
+- 段階8f 以降は Docker の起動が前提（画面の確認・結合テスト・手動テスト）。リポジトリ直下で `docker compose up -d` を実行する。`.env` は `.env.example` から作り、ローカルでは `APP_ENV=development`、`TEST_FIXED_NOW=2026-09-05T12:00:00` にする
+- Mac の再起動後などで Docker Desktop が止まっていると `docker compose` は失敗する。先に Docker Desktop を起動する。`docker` コマンドが PATH にない場合は `~/.docker/bin/docker` を使う
+- 結合テストは `backend/tests/integration/run_all.sh` で実行する（手順は `docs/integration_test.md`）。コードを変えたら `docker compose up -d --build` でイメージを作り直してから実行する

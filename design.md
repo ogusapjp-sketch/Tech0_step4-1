@@ -19,8 +19,8 @@
 | v1.0 | 2026-09-06 | 全体確認を実施し確定。税率を万分率の整数に変更、会員ID・商品コードの判別方式を追加、API 2 の入出力を追加 |
 | v1.1 | 2026-09-13 | テスト設計での指摘により、クラス図 `PricingService.apply_discount` の引数に `member` を追加。6.1 に空白の扱い（フロントで trim、バックは拒否）と未知フィールドの拒否を追記 |
 | v1.2 | 2026-09-13 | テスト実装可否の確認により、`calculate` に `now` を追加、複数企画の重複時は値引き額が大きい方を適用（6.1）、テスト用の環境変数（6.3）を追加 |
-| v1.4 | 2026-09-14 | 実装（段階8〜9）で確定した事項を反映。APP_ENV 未設定は本番扱い、Cookie の名前・有効期間、追加のセキュリティヘッダ（Referrer-Policy・Permissions-Policy・HSTS）、CSP は nonce 方式、担当者名の表示用 Cookie、DB 接続のタイムアウトと接続の入れ替え（pool_pre_ping は使わない）、BFF のタイムアウト、冪等キーの作り直し規則 |
 | v1.3 | 2026-09-13 | 実装着手時の確認（Claude Code からの18件の指摘）により改訂。パスワードハッシュを Argon2id に変更、タイムゾーンを日本時間に固定、Clock を業務用とトークン用に分離、フロントの期間判定を廃止、ロック時の失敗回数リセット、未定義だったエラー応答（存在しない会員ID・明細の重複・トークンなし）、ログアウト時のトークン受け渡し、ローカルの Cookie 属性、DDL の管理方法を追記 |
+| v1.4 | 2026-09-14 | 実装（段階8〜9）で確定した事項を反映。APP_ENV 未設定は本番扱い、Cookie の名前・有効期間、追加のセキュリティヘッダ（Referrer-Policy・Permissions-Policy・HSTS）、CSP は nonce 方式、担当者名の表示用 Cookie、DB 接続のタイムアウトと接続の入れ替え（pool_pre_ping は使わない）、BFF のタイムアウト、冪等キーの作り直し規則（同日補正：改訂履歴の順序、CSP の記載を実装に合わせて補完） |
 
 ---
 
@@ -908,7 +908,7 @@ flowchart LR
 | CORS（ブラウザ側） | ブラウザと Next.js は同一オリジンのため、CORS は発生しない |
 | CORS（FastAPI 側） | `CORSMiddleware` で許可オリジンを Next.js の内部アドレスのみに限定する。内部 Ingress により外部からは届かないが、多層防御として設定する |
 | セキュリティヘッダ | Next.js が全パスに `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy: camera=(self), microphone=(), geolocation=()` を付与する。本番では `Strict-Transport-Security: max-age=31536000` も付与する |
-| CSP | リクエストごとに nonce を生成し、`script-src 'self' 'nonce-…' 'strict-dynamic'`、`style-src 'self' 'nonce-…'`、`default-src 'self'`、`img-src 'self' data: blob:`、`media-src 'self' blob:`、`object-src 'none'`、`frame-ancestors 'none'` とする。インラインスクリプトは許可しない。全ページを毎回サーバで描画する（静的生成では nonce が付かないため）。開発時のみ `'unsafe-eval'` を追加 |
+| CSP | ページのリクエストごとに `proxy.ts` が nonce を生成し、次のディレクティブをすべて付与する：`default-src 'self'`、`script-src 'self' 'nonce-…' 'strict-dynamic'`、`style-src 'self' 'nonce-…'`、`img-src 'self' data: blob:`、`font-src 'self'`、`connect-src 'self'`、`media-src 'self' blob:`、`object-src 'none'`、`base-uri 'self'`、`form-action 'self'`、`frame-ancestors 'none'`。本番（`APP_ENV` 未設定を含む）ではさらに `upgrade-insecure-requests` を付与する。開発時（`APP_ENV` が production 以外）は `script-src` に `'unsafe-eval'` を追加し、`upgrade-insecure-requests` は付与しない（http://localhost のため）。nonce のないインラインスクリプト・スタイルは許可しない。全ページを毎回サーバで描画する（静的生成では nonce が付かないため）。API（`/api`）と静的ファイル（`/_next/static`、`/_next/image`、`/favicon.ico`）には付与しない |
 | ページの認証ガード | `proxy.ts` が Cookie の有無を確認し、未ログインでレジ画面を開いたらログイン画面へ転送する。トークンの有効性は API 呼び出し時に FastAPI が確認する |
 | BFF のタイムアウト | FastAPI を 15秒待ち、超えたら 500 INTERNAL_ERROR を返す（6.2） |
 
