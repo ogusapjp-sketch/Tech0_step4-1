@@ -5,7 +5,7 @@
 | 項目 | 内容 |
 |---|---|
 | 文書名 | 簡易POSアプリ改（Lv2）設計仕様書 |
-| 版 | v1.3 |
+| 版 | v1.4 |
 | 作成日 | 2026-09-06 |
 | 作成者 | おぐちゃん（Tech0 Step4 / 12期） |
 | 上位文書 | 簡易POSアプリ改（Lv2）要件定義書 v1.0 |
@@ -19,6 +19,7 @@
 | v1.0 | 2026-09-06 | 全体確認を実施し確定。税率を万分率の整数に変更、会員ID・商品コードの判別方式を追加、API 2 の入出力を追加 |
 | v1.1 | 2026-09-13 | テスト設計での指摘により、クラス図 `PricingService.apply_discount` の引数に `member` を追加。6.1 に空白の扱い（フロントで trim、バックは拒否）と未知フィールドの拒否を追記 |
 | v1.2 | 2026-09-13 | テスト実装可否の確認により、`calculate` に `now` を追加、複数企画の重複時は値引き額が大きい方を適用（6.1）、テスト用の環境変数（6.3）を追加 |
+| v1.4 | 2026-09-14 | 実装（段階8〜9）で確定した事項を反映。APP_ENV 未設定は本番扱い、Cookie の名前・有効期間、追加のセキュリティヘッダ（Referrer-Policy・Permissions-Policy・HSTS）、CSP は nonce 方式、担当者名の表示用 Cookie、DB 接続のタイムアウトと接続の入れ替え（pool_pre_ping は使わない）、BFF のタイムアウト、冪等キーの作り直し規則 |
 | v1.3 | 2026-09-13 | 実装着手時の確認（Claude Code からの18件の指摘）により改訂。パスワードハッシュを Argon2id に変更、タイムゾーンを日本時間に固定、Clock を業務用とトークン用に分離、フロントの期間判定を廃止、ロック時の失敗回数リセット、未定義だったエラー応答（存在しない会員ID・明細の重複・トークンなし）、ログアウト時のトークン受け渡し、ローカルの Cookie 属性、DDL の管理方法を追記 |
 
 ---
@@ -111,6 +112,7 @@ flowchart LR
 | MySQL | Azure Database for MySQL Flexible Server | Container Apps 環境からのみ接続を許可。パブリックアクセスは無効 |
 | 秘密情報 | Container Apps のシークレット | DB接続文字列、JWT署名鍵を環境変数として注入。コードやリポジトリには含めない（NFR-SEC-10） |
 | タイムゾーン | 全コンテナに `TZ=Asia/Tokyo` | 日時はすべて日本時間で扱い、タイムゾーン情報を持たない値として保存・判定する。1店舗の国内システムのため UTC 変換を挟まない |
+| DB 接続 | SQLAlchemy の接続プール | 読み書きタイムアウト 10秒、TCP 接続タイムアウト 3秒。`pool_pre_ping` は使わず（接続確認の待ちが読み書きタイムアウトと重なり、最大20秒待つため）、接続を 240秒で入れ替える（Azure の無通信タイムアウト 4分より短く） |
 | テーブル作成 | `schema.sql` を管理者権限で実行 | アプリ用 DB ユーザーは DML 権限のみ（7.5）のため、DDL はアプリから実行しない。ローカルは MySQL コンテナの初期化時、Azure は管理者が手動で実行する |
 
 **Azure Functions（従量課金）を採用しない理由**：アイドル後の初回リクエストでコールドスタートが発生し、NFR-PERF-03（久しぶりのアクセスでも極端に遅くならない）を満たさないため。
@@ -844,13 +846,15 @@ type TransactionResponse = {
 |---|---|
 | 送信前に通信断 | 購入リストを保持したまま「通信できません」を表示。回線復旧後に再度購入ボタンを押せる |
 | 送信後、レスポンス受信前に通信断 | フロントは同じ idempotency_key で再送する。バックエンドは初回で保存済みなら DUPLICATE を返し、フロントは完了扱いにする。未保存なら通常どおり処理する |
+| 冪等キーの生成 | 購入ボタンを最初に押したときに生成する。確定するまで、購入リストと会員が変わらない限り同じキーを使い、変わったら作り直す |
 | DB 保存に失敗 | トランザクションをロールバックし 500 を返す。取引は成立せず、購入リストは保持される |
+| DB が応答しない | FastAPI は読み書きタイムアウト（10秒）で 500 を返し、ロールバックする。BFF は FastAPI を 15秒待って超えたら 500 を返す。**FastAPI が必ず BFF より先に諦める**ことで、画面が 500 を表示した後に DB が復旧して遅れて保存される不整合を防ぐ。画面は「処理に失敗しました。もう一度お試しください」を表示し、購入リストと冪等キーを保持する |
 
 いずれの場合も、要件 NFR-OPS-05（確定していないのに確定扱いになる／二重に確定される、が起きない）を満たす。
 
 ### 6.3 テスト用の環境変数
 
-テスト（第5章・第6章）で日時や有効期間を制御するため、以下の環境変数を設ける。**`APP_ENV=production` では無視され、本番の挙動に影響しない。**
+テスト（第5章・第6章）で日時や有効期間を制御するため、以下の環境変数を設ける。**`APP_ENV=production` では無視され、本番の挙動に影響しない。`APP_ENV` が未設定の場合も本番扱いとする**（設定漏れで安全側に倒れるようにするため。ローカルでは `APP_ENV=development` を明示する）。
 
 | 環境変数 | 内容 | 既定値 |
 |---|---|---|
@@ -874,7 +878,10 @@ type TransactionResponse = {
 | トークン形式 | JWT（HS256）。署名鍵は FastAPI の環境変数から注入し、コードに含めない。BFF（Next.js）は署名鍵を持たず、トークンを検証せずに中継するのみ |
 | アクセストークン | 有効期間60分。`sub` に担当者IDを持つ。FastAPI は認証必須の API（第5.1節 API 3〜7）でこれを検証する |
 | リフレッシュトークン | 有効期間12時間（1営業日）。ランダム値を発行し、SHA-256 ハッシュを DB に保存する。更新のたびに新しいトークンを発行し、旧トークンを失効させる（ローテーション） |
-| 保管場所 | 両トークンとも httpOnly・Secure・SameSite=Strict の Cookie。ブラウザの JavaScript から読めず（XSS 対策）、他サイトからのリクエストには送信されない（CSRF 対策）。Secure 属性は `APP_ENV=production` でのみ付与し、ローカル（http://localhost）では外す |
+| 保管場所 | 両トークンとも httpOnly・Secure・SameSite=Strict・Path=/ の Cookie（名前：`pos_access_token`、`pos_refresh_token`）。ブラウザの JavaScript から読めず（XSS 対策）、他サイトからのリクエストには送信されない（CSRF 対策）。Secure 属性は本番（`APP_ENV` 未設定を含む）でのみ付与し、ローカル（http://localhost）では外す |
+| Cookie の有効期間 | 3つとも Max-Age 12時間。アクセストークンの Cookie も12時間とする。60分で Cookie が消えると BFF がトークンなしで FastAPI を呼ぶことになり、「期限切れ → 更新」の経路に入れないため。JWT 自体の有効期間は60分のまま |
+| 担当者名の表示 | ログイン時に BFF が表示用 Cookie `pos_staff`（httpOnly、`{staff_id, name}`）を設定し、レジ画面をサーバで描画するときに読む。改ざんされても表示が変わるだけで認証には影響しない |
+| ブラウザからの Authorization ヘッダ | BFF は中継しない。トークンは Cookie からのみ取り出す |
 | 失効 | ログアウト時に DB の `revoked` を TRUE にする。アカウントロック時も同様。アクセストークンは最大60分で自然失効する |
 | パスワード | Argon2id でハッシュ化（argon2-cffi、既定パラメータ）。12〜128文字、文字種の強制なし（NFR-SEC-02、03） |
 | 試行制限 | 10回連続失敗で30分ロック。`locked_until` で管理し、**ロック発生時と成功時**に `failed_count` を 0 に戻す。解除後は再び10回から数える（NFR-SEC-04） |
@@ -900,7 +907,10 @@ flowchart LR
 | BFF の役割 | Cookie のトークンを `Authorization` ヘッダに詰め替えて FastAPI へ転送。期限切れ時のリフレッシュを代行。業務ロジックは持たない |
 | CORS（ブラウザ側） | ブラウザと Next.js は同一オリジンのため、CORS は発生しない |
 | CORS（FastAPI 側） | `CORSMiddleware` で許可オリジンを Next.js の内部アドレスのみに限定する。内部 Ingress により外部からは届かないが、多層防御として設定する |
-| セキュリティヘッダ | Next.js が `Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY` を付与する |
+| セキュリティヘッダ | Next.js が全パスに `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy: camera=(self), microphone=(), geolocation=()` を付与する。本番では `Strict-Transport-Security: max-age=31536000` も付与する |
+| CSP | リクエストごとに nonce を生成し、`script-src 'self' 'nonce-…' 'strict-dynamic'`、`style-src 'self' 'nonce-…'`、`default-src 'self'`、`img-src 'self' data: blob:`、`media-src 'self' blob:`、`object-src 'none'`、`frame-ancestors 'none'` とする。インラインスクリプトは許可しない。全ページを毎回サーバで描画する（静的生成では nonce が付かないため）。開発時のみ `'unsafe-eval'` を追加 |
+| ページの認証ガード | `proxy.ts` が Cookie の有無を確認し、未ログインでレジ画面を開いたらログイン画面へ転送する。トークンの有効性は API 呼び出し時に FastAPI が確認する |
+| BFF のタイムアウト | FastAPI を 15秒待ち、超えたら 500 INTERNAL_ERROR を返す（6.2） |
 
 **CORS を「不要」で済ませない理由**：BFF 方式では本来ブラウザ側の CORS は発生しないが、FastAPI 側で許可オリジンを明示しておくことで、将来ブラウザから直接呼ぶ変更が入っても意図しないオリジンからのアクセスを拒否できる。
 
