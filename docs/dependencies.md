@@ -134,6 +134,7 @@ push と pull request のたびに実行する。どれか1つでも失敗した
 | backend | `pip-audit --strict -r requirements-dev.txt`（requirements.txt も読み込まれる） | **既知の脆弱性が1件でもある**（下記） |
 | frontend | `jest --coverage`（単体テスト。Statements・Branch のしきい値 80%） | テストが1件でも失敗、またはカバレッジが 80% 未満 |
 | frontend | `npm run typecheck`（`tsc --noEmit`） | 型エラーがある |
+| frontend | `npm run build`（`next build`） | 本番ビルドが失敗する。TypeScript のコンパイラ API を使うため、型チェックでは見つからない互換性の問題を検知する |
 | frontend | `npm audit --audit-level=high` | High 以上の脆弱性がある（design.md 7.6） |
 
 **pip-audit の失敗条件（人間が決定）**：pip-audit 2.10.1 には深刻度で絞り込む機能がない（除外は `--ignore-vuln <ID>` のみ）。そのため design.md 7.6 の「High 以上で失敗」より厳しく、深刻度に関係なく既知の脆弱性があれば失敗させる。修正版がなく許容する場合は、ワークフローに `--ignore-vuln <ID>` を追加し、次の表に理由を記録する。
@@ -146,10 +147,18 @@ push と pull request のたびに実行する。どれか1つでも失敗した
 
 ### Dependabot（`.github/dependabot.yml`）
 
-| 対象 | ディレクトリ | 間隔 |
-|---|---|---|
-| pip | `/backend` | 週次（Asia/Tokyo） |
-| npm | `/frontend` | 週次（Asia/Tokyo） |
+| 対象 | ディレクトリ | 間隔 | 追加の設定 |
+|---|---|---|---|
+| pip | `/backend` | 週次（Asia/Tokyo） | `pydantic` と `pydantic-core` を1つの PR にまとめる（pydantic が pydantic-core の版を固定で要求するため） |
+| npm | `/frontend` | 週次（Asia/Tokyo） | `typescript` の 7 系を無視する（上記「TypeScript を 7 系にしない理由」）。`@types/node` のメジャー更新を無視する（実行環境の Node 24 に合わせる） |
+
+**閉じた更新 PR（2026-09-14、人間が判断）**：初回の実行で作られた次の3件は、マージせずに理由をコメントして閉じ、上表の設定を追加した。
+
+| PR | 内容 | CI | 閉じた理由 |
+|---|---|---|---|
+| #1 | pydantic-core 2.46.5 → 2.49.0 | 失敗（`pip check`） | pydantic 2.13.5 が pydantic-core 2.46.5 を必須にしており、単独では更新できない |
+| #2 | @types/node 24.13.4 → 26.5.1 | 成功 | 実行環境が Node 24 のため、型定義も 24 系に合わせる |
+| #3 | typescript 6.0.3 → 7.0.2 | 成功 | 7 系は Next.js のビルドが使うコンパイラ API がない。CI が成功したのは `next build` を実行していなかったためで、CI に `next build` を追加した |
 
 Dependabot の PR でも CI が実行されるため、テスト・型チェック・脆弱性検査に合格した更新だけを取り込む。メジャー更新は design.md 7.6 の方針（セキュリティ修正を除き、実装期間中は行わない）に従って判断する。
 

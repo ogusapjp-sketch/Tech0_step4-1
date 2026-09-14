@@ -8,6 +8,13 @@ updates:
     schedule:
       interval: "weekly"
       timezone: "Asia/Tokyo"
+    groups:
+      # pydantic は pydantic-core の版を固定で要求するため、片方だけ上げると依存を満たせない。同じ PR で更新する
+      pydantic:
+        patterns:
+          - "pydantic"
+          - "pydantic-core"
+          - "pydantic_core"
 
   # フロントエンド：frontend/package.json・package-lock.json
   - package-ecosystem: "npm"
@@ -15,3 +22,10 @@ updates:
     schedule:
       interval: "weekly"
       timezone: "Asia/Tokyo"
+    ignore:
+      # TypeScript 7 系は従来のコンパイラ API を公開しておらず、Next.js のビルドが使えないため採用しない（docs/dependencies.md）
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
+      # 実行環境は Node 24。型定義もメジャーバージョンを 24 系に合わせる
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

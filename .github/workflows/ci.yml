@@ -71,5 +71,12 @@ jobs:
       - name: 型チェック
         run: npm run typecheck
 
+      # 本番と同じビルドが通ることを確認する。Next.js のビルドは TypeScript のコンパイラ API も使うため、
+      # 型チェックやテストでは見つからない互換性の問題（例：TypeScript 7 系）を検知できる
+      - name: 本番ビルド（next build）
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
       - name: 脆弱性検査（npm audit。High 以上で失敗）
         run: npm audit --audit-level=high
