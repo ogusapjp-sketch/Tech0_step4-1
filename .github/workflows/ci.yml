@@ -1,0 +1,75 @@
+# CI（design.md 7.6、test_spec.md 2.5）
+# push と pull request のたびに、単体テスト（カバレッジ付き）・型チェック・脆弱性検査を実行する
+# 結合テスト（Docker）は含めない。手順は docs/integration_test.md
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend（pytest・pip-audit）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: 依存パッケージを入れる（requirements-dev.txt の固定バージョンどおり）
+        run: |
+          pip install --no-deps -r requirements-dev.txt
+          pip check
+
+      - name: 単体テスト（カバレッジ付き）
+        run: pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json
+
+      - name: カバレッジの合否（Statements・Branch とも 80% 以上）
+        run: python ../.github/scripts/check_python_coverage.py coverage.json 80
+
+      # pip-audit には深刻度で絞る機能がないため、既知の脆弱性が1件でもあれば失敗させる（人間が決定）。
+      # 許容する場合は --ignore-vuln <ID> を追加し、理由を docs/dependencies.md に記録する
+      - name: 脆弱性検査（pip-audit）
+        run: |
+          python -m venv "$RUNNER_TEMP/pip-audit"
+          "$RUNNER_TEMP/pip-audit/bin/pip" install pip-audit==2.10.1
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" --strict -r requirements-dev.txt
+
+  frontend:
+    name: frontend（jest・型チェック・npm audit）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 依存パッケージを入れる（package-lock.json どおり）
+        run: npm ci
+
+      - name: 単体テスト（カバレッジ付き。Statements・Branch とも 80% 以上）
+        run: npx jest --coverage --coverageThreshold='{"global":{"statements":80,"branches":80}}'
+
+      - name: 型チェック
+        run: npm run typecheck
+
+      - name: 脆弱性検査（npm audit。High 以上で失敗）
+        run: npm audit --audit-level=high

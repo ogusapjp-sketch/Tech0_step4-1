@@ -3,20 +3,32 @@
 design.md 7.6 に基づき、採用したパッケージのバージョン、確認日、脆弱性情報の確認結果を記録する。
 バージョンは Claude Code が調査して案を出し、人間が承認してから採用する。
 
+**最終版（段階10、2026-09-14）**。以後の更新は Dependabot の PR と CI の脆弱性検査で管理する（「継続的な検査」の章）。
+
 ## 確認方法
 
 | 項目 | 方法 |
 |---|---|
-| 最新安定版 | PyPI JSON API（`https://pypi.org/pypi/<package>/json`）、`npm view <package> version`、Docker Hub のタグ一覧 |
-| 脆弱性 | OSV（`https://api.osv.dev/v1/querybatch`）で、採用するバージョンを指定して照会。OSV は GitHub Advisory Database と PyPA Advisory Database（NVD の CVE を含む）を集約している |
+| 最新安定版 | PyPI JSON API（`https://pypi.org/pypi/<package>/json`）、`npm view <package> version`、Docker Hub のタグ一覧、GitHub Releases（Actions） |
+| 脆弱性（採用時） | OSV（`https://api.osv.dev/v1/querybatch`）で、採用するバージョンを指定して照会。OSV は GitHub Advisory Database と PyPA Advisory Database（NVD の CVE を含む）を集約している |
+| 脆弱性（継続） | CI で `pip-audit` と `npm audit` を push・pull request のたびに実行（`.github/workflows/ci.yml`） |
+| 更新 | Dependabot が週次で更新 PR を作る（`.github/dependabot.yml`） |
+
+## 最終確認（2026-09-14）
+
+| 対象 | 方法 | 結果 |
+|---|---|---|
+| Python：`backend/requirements.txt`・`requirements-dev.txt` の固定パッケージ 32件 | OSV で固定バージョンを照会 | 既知の脆弱性なし |
+| npm：`frontend/package-lock.json` の全パッケージ 368件（間接依存を含む） | `npm audit` | 0 件 |
+| Docker イメージ | 下記「ランタイム」のとおり（段階8c・8e で確認） | `node:24.21.0-slim` の OS パッケージは Dockerfile で更新を適用 |
 
 ## ランタイム
 
 | 種別 | 採用 | 確認日 | 状態 |
 |---|---|---|---|
-| Python | 3.11（Docker イメージ `python:3.11.16-slim`） | 2026-09-13 | 承認済み |
+| Python | 3.11（Docker イメージ `python:3.11.16-slim`。CI は `actions/setup-python` の 3.11） | 2026-09-13 | 承認済み |
 | MySQL | 8.0（Docker イメージ `mysql:8.0.46`） | 2026-09-13 | 承認済み |
-| Node.js | 24（Docker イメージ `node:24.21.0-slim`、Debian 12 bookworm） | 2026-09-14 | 承認済み。導入は段階8e |
+| Node.js | 24（Docker イメージ `node:24.21.0-slim`、Debian 12 bookworm。CI も 24.21.0） | 2026-09-14 | 承認済み。導入は段階8e |
 
 **`node:24.21.0-slim` の確認（段階8e）**：Docker Scout は Docker Hub へのログインが必要なため使わず、次の2点で確認した。
 
@@ -27,7 +39,7 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 
 ## バックエンド（Python）
 
-承認日：2026-09-13。脆弱性の確認日：2026-09-13。
+承認日：2026-09-13。脆弱性の最終確認日：2026-09-14。
 
 ### 直接依存
 
@@ -44,11 +56,11 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | httpx | 0.28.1 | FastAPI の TestClient（段階8a）、結合テストの HTTP クライアント（段階9）。開発用 | なし | 段階8a |
 | pytest | 9.1.1 | テスト（開発用） | なし | 段階1 |
 | pytest-cov | 7.1.0 | カバレッジ（開発用） | なし | 段階1 |
-| pip-audit | 2.10.1 | 脆弱性検査（開発用・CI） | なし | 未導入（段階10） |
+| pip-audit | 2.10.1 | 脆弱性検査（CI 専用。requirements には含めず、CI の一時的な仮想環境に入れる） | なし | 段階10 |
 
 ### 間接依存（導入済みのもの）
 
-脆弱性の確認日：段階8a の分は 2026-09-14。
+脆弱性の最終確認日：2026-09-14。
 
 | パッケージ | バージョン | 依存元 | 既知の脆弱性 |
 |---|---|---|---|
@@ -85,7 +97,7 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 
 ## フロントエンド（npm）
 
-承認日：2026-09-13。脆弱性の確認日：2026-09-13。バージョンは `frontend/package.json` に `^` なしで記載し、`package-lock.json` で間接依存まで固定する。
+承認日：2026-09-13。脆弱性の最終確認日：2026-09-14。バージョンは `frontend/package.json` に `^` なしで記載し、`package-lock.json` で間接依存まで固定する。
 
 | パッケージ | バージョン | 用途 | 既知の脆弱性 | 導入した段階 |
 |---|---|---|---|---|
@@ -108,3 +120,37 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 **TypeScript を 7 系にしない理由**：最新は 7.0.2 だが、7 系は Go への書き直し版で従来のコンパイラ API を公開していない。ts-jest は `typescript <7` を要求し、Next.js の型チェックも従来の API を使うため、6 系の最新（6.0.3）を採用した。
 
 **導入時の確認（段階3）**：`npm install` 後の `npm audit` は 0 件。install 時に `glob@10.5.0` の非推奨警告が出る。これは jest → @jest/transform → babel-plugin-istanbul → test-exclude の間接依存で、開発用（テスト実行時のみ）。OSV で `glob@10.5.0` に既知の脆弱性がないことを確認した。jest 側の更新を待ち、個別には上書きしない。
+
+## 継続的な検査（段階10）
+
+### CI（`.github/workflows/ci.yml`）
+
+push と pull request のたびに実行する。どれか1つでも失敗したらビルドは失敗する。
+
+| ジョブ | 検査 | 失敗の条件 |
+|---|---|---|
+| backend | `pytest --cov=app --cov-branch`（単体テスト） | テストが1件でも失敗 |
+| backend | カバレッジ（`.github/scripts/check_python_coverage.py`） | Statements・Branch のどちらかが 80% 未満（test_spec.md 2.5） |
+| backend | `pip-audit --strict -r requirements-dev.txt`（requirements.txt も読み込まれる） | **既知の脆弱性が1件でもある**（下記） |
+| frontend | `jest --coverage`（単体テスト。Statements・Branch のしきい値 80%） | テストが1件でも失敗、またはカバレッジが 80% 未満 |
+| frontend | `npm run typecheck`（`tsc --noEmit`） | 型エラーがある |
+| frontend | `npm audit --audit-level=high` | High 以上の脆弱性がある（design.md 7.6） |
+
+**pip-audit の失敗条件（人間が決定）**：pip-audit 2.10.1 には深刻度で絞り込む機能がない（除外は `--ignore-vuln <ID>` のみ）。そのため design.md 7.6 の「High 以上で失敗」より厳しく、深刻度に関係なく既知の脆弱性があれば失敗させる。修正版がなく許容する場合は、ワークフローに `--ignore-vuln <ID>` を追加し、次の表に理由を記録する。
+
+| 許容した脆弱性の ID | パッケージ | 理由 | 記録日 |
+|---|---|---|---|
+| （なし） | | | |
+
+**Actions のバージョン**（2026-09-14 確認。いずれも最新）：`actions/checkout@v7`（v7.0.1）、`actions/setup-python@v7`（v7.0.0）、`actions/setup-node@v7`（v7.0.0）。
+
+### Dependabot（`.github/dependabot.yml`）
+
+| 対象 | ディレクトリ | 間隔 |
+|---|---|---|
+| pip | `/backend` | 週次（Asia/Tokyo） |
+| npm | `/frontend` | 週次（Asia/Tokyo） |
+
+Dependabot の PR でも CI が実行されるため、テスト・型チェック・脆弱性検査に合格した更新だけを取り込む。メジャー更新は design.md 7.6 の方針（セキュリティ修正を除き、実装期間中は行わない）に従って判断する。
+
+**リポジトリの設定**：脆弱性のあるバージョンが検出されたときに更新 PR を自動生成する（design.md 7.6）には、GitHub の Settings → Code security で「Dependabot alerts」と「Dependabot security updates」を有効にする。設定ファイルでは有効にできない。

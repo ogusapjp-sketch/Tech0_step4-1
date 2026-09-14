@@ -1,0 +1,17 @@
+# Dependabot によるバージョン更新（design.md 7.6）
+# 週次で依存パッケージの更新を確認し、更新 PR を作る。PR でも CI（.github/workflows/ci.yml）が実行される
+version: 2
+updates:
+  # バックエンド：backend/requirements.txt・requirements-dev.txt（== 固定）
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      timezone: "Asia/Tokyo"
+
+  # フロントエンド：frontend/package.json・package-lock.json
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      timezone: "Asia/Tokyo"
