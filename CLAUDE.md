@@ -7,7 +7,7 @@
 
 | 文書 | 役割 | 実装で参照する箇所 |
 |---|---|---|
-| `design.md`（v1.4） | どう作るか | 2.1 構成、3.3 クラス図、4.2 テーブル定義、5 API、6.1 計算規則・上下限、6.2 エラーコード、6.3 テスト用環境変数、7 セキュリティ |
+| `design.md`（v1.5） | どう作るか | 2.1 構成、3.3 クラス図、4.2 テーブル定義、5 API、6.1 計算規則・上下限、6.2 エラーコード、6.3 テスト用環境変数、7 セキュリティ |
 | `test_spec.md`（v1.3） | どう検証するか | 3 テストデータ、4 単体テストのケース表、4.3 関数シグネチャ・reducer 定義、5 結合テスト |
 | `requirements.md`（v1.0） | なぜそうするか | 迷ったときの根拠。3.4 業務ルール |
 
@@ -25,7 +25,7 @@
 
 - フロントエンド：Next.js（App Router）／ TypeScript。Route Handler を BFF として使う
 - バックエンド：FastAPI ／ Python 3.11。SQLAlchemy 2.x、Pydantic v2（全スキーマ `extra="forbid"`）、Argon2id（argon2-cffi）
-- DB：MySQL 8.0（ローカルは Docker、本番は Azure Database for MySQL Flexible Server）。日時はすべて日本時間（`TZ=Asia/Tokyo`）
+- DB：MySQL 8.4（ローカルは Docker、本番は Azure Database for MySQL Flexible Server）。日時はすべて日本時間（`TZ=Asia/Tokyo`）
 - フロントエンド実行環境：Node 24
 - テスト：pytest（`--cov=app --cov-branch`）、jest（`--coverage`）。カバレッジ目標 Statements・Branch 80%以上
 

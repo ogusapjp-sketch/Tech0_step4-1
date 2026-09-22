@@ -27,13 +27,20 @@ design.md 7.6 に基づき、採用したパッケージのバージョン、確
 | 種別 | 採用 | 確認日 | 状態 |
 |---|---|---|---|
 | Python | 3.11（Docker イメージ `python:3.11.16-slim`。CI は `actions/setup-python` の 3.11） | 2026-09-13 | 承認済み |
-| MySQL | 8.0（Docker イメージ `mysql:8.0.46`） | 2026-09-13 | 承認済み |
+| MySQL | 8.4（Docker イメージ `mysql:8.4.11`、Oracle Linux 9.8 ベース） | 2026-09-22 | 承認済み。Azure の検証環境に合わせて 8.0 から変更（design.md v1.5） |
 | Node.js | 24（Docker イメージ `node:24.21.0-slim`、Debian 12 bookworm。CI も 24.21.0） | 2026-09-14 | 承認済み。導入は段階8e |
 
 **`node:24.21.0-slim` の確認（段階8e）**：Docker Scout は Docker Hub へのログインが必要なため使わず、次の2点で確認した。
 
 - Node.js 本体：nodejs.org のリリース一覧で、24.21.0（2026-09-07）が 24 系の最新。これより後にセキュリティリリースはない（直近のセキュリティリリースは 24.18.1）
 - OS パッケージ：イメージ内で `apt list --upgradable` を実行し、`libpcre2-8-0` にセキュリティ更新（10.42-1 → 10.42-1+deb12u1）があることを確認。OSV の Debian 12 の情報では、10.42-1 に PCRE2 の境界外読み書きの脆弱性（DEBIAN-CVE-2026-86145 など6件）がある。`frontend/Dockerfile` で `apt-get upgrade` を実行して更新を取り込む
+
+**`mysql:8.4.11` の確認（2026-09-22、8.0 からの変更時）**
+
+- 最新版：Docker Hub の 8.4 系タグで 8.4.11 が最新
+- OSV：エコシステムを指定しない照会で ALSA-2026:56936・RHSA-2026:56936／56973 が該当したが、いずれも AlmaLinux 8／RHEL 9 の**ディストリビューション版 mysql パッケージ**向けの勧告で、修正版が `8.4.11-1.module…`。対象 CVE（CVE-2026-46936 など8件）は上流 8.4.11 で修正済みであり、公式イメージ（Oracle 製ビルドの 8.4.11）には該当しない。RPM のリリース番号との比較による誤検知と判断した。OSV に MySQL 製品そのもののエコシステムはない
+- OS パッケージ：イメージ内で `microdnf upgrade --assumeno` を実行し、更新可能な6件（openssl 3.5.5→3.5.8、libcurl、libevent など）を確認。参考までに 8.0.46 では55件だった。MySQL は公式イメージをそのまま使い（自前でビルドしない）、更新は公式イメージの更新で取り込む
+- 動作確認：schema.sql・seed.sql の投入、単体テスト（pytest 247件・jest 191件）、結合テスト（`run_all.sh` の全4回）が 8.0 と同じ結果。認証方式は `root`・`pos_app` とも caching_sha2_password のままで、PyMySQL（cryptography 同梱）での接続に変更は不要だった
 
 ローカルの単体テストは `backend/.venv`（Anaconda の Python 3.11.7 から作成）で実行する。
 

@@ -4,7 +4,7 @@
 
 services:
   mysql:
-    image: mysql:8.0.46
+    image: mysql:8.4.11
     # IT-34 の手順（docker pause mysql）に合わせたコンテナ名
     container_name: mysql
     command:
