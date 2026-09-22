@@ -197,8 +197,10 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
       countsRef.current.frames += 1;
       // 1フレームに複数写っていたら、映像の中心に最も近い1件だけを採用する
       const picked = pickCenterMost(barcodes, video.videoWidth, video.videoHeight);
-      lastFrameRef.current = { codes: barcodes.map((barcode) => barcode.rawValue), picked };
-      const decision = nextScanState(scanStates.current, picked, at);
+      const codes = barcodes.map((barcode) => barcode.rawValue);
+      lastFrameRef.current = { codes, picked };
+      // 写っているコードはすべて渡す（採用されなかったものも「見えている」として扱う）
+      const decision = nextScanState(scanStates.current, codes, picked, at);
       scanStates.current = decision.states;
       if (decision.accepted === null) {
         return;

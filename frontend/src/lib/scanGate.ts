@@ -3,11 +3,12 @@
 //
 // 1フレームに複数のバーコードが写ることがある（メニュー早見表は複数のカードが並ぶ）。
 // そのままでは、写っているコードが交互に「別のコード」として受け付けられてしまうため、
-// フレームごとに1つだけ採用し（映像の中心に最も近いもの）、状態はコードごとに持つ。
+// フレームごとに受付を判定するのは1つだけ（映像の中心に最も近いもの）とし、状態はコードごとに持つ。
+// 写っているコードは採用の有無に関係なく「見えている」として扱い、未検出のフレーム数は増やさない。
 //
 // 受付の条件（採用したコードについて）
-//   - そのコードが初出 → 受け付ける
-//   - すでに知っているコード → 「離した」と判定済みのときだけ受け付ける
+//   - まだ受け付けたことがないコード → 受け付ける
+//   - 受け付けたことがあるコード → 「離した」と判定済みのときだけ受け付ける
 //   - 「離した」＝ misses（連続未検出フレーム数）が SCAN_RELEASE_FRAMES 以上、
 //     かつ lastSeenAt からの経過が SCAN_RELEASE_MS 以上
 // 手入力はこの仕組みを通らない。
@@ -24,7 +25,16 @@ export type ScannedBarcode = {
 };
 
 /** コードごとの状態 */
-export type CodeState = { lastSeenAt: number; misses: number; released: boolean };
+export type CodeState = {
+  /** そのコードを最後に検出した時刻（採用されたかどうかに関係なく更新する） */
+  lastSeenAt: number;
+  /** そのコードが連続して検出されなかったフレーム数 */
+  misses: number;
+  /** 一度受け付けたあと、「離した」と判定済みか */
+  released: boolean;
+  /** これまでに受け付けたことがあるか */
+  everAccepted: boolean;
+};
 export type ScanStates = ReadonlyMap<string, CodeState>;
 
 export type AcceptReason = "初出" | "離した後の再受付";
@@ -74,10 +84,15 @@ export const pickCenterMost = (
 };
 
 /**
- * 採用した1件（読めなければ null）から、次の状態と受け付けるコードを決める。副作用を持たない。
+ * 1フレームの結果から、次の状態と受け付けるコードを決める。副作用を持たない。
+ *
+ * - `detected`：そのフレームで検出したコード全部。採用の有無に関係なく状態を持ち、`lastSeenAt` を更新して `misses` を 0 に戻す
+ * - `picked`：受付の判定を行う1件（映像の中心に最も近いもの）。読めなければ null
+ * - 検出されなかった既知のコードだけ `misses` を増やし、「離した」の判定と削除を行う
  */
 export const nextScanState = (
   states: ScanStates,
+  detected: readonly string[],
   picked: string | null,
   now: number,
   releaseMs: number = SCAN_RELEASE_MS,
@@ -90,32 +105,42 @@ export const nextScanState = (
   let sinceLastSeenMs: number | null = null;
   let missesAtAccept = 0;
 
-  // 採用されなかった既知のコードは、未検出のフレーム数を増やす
+  // 検出されなかった既知のコード：未検出のフレーム数を増やす
   for (const [code, state] of states) {
-    if (code === picked) {
-      continue;
+    if (detected.includes(code)) {
+      continue; // 検出されたものは下でまとめて更新する
     }
     const misses = state.misses + 1;
     if (misses >= forgetFrames) {
       continue; // 十分に見えなくなったら忘れる
     }
     const released = state.released || (misses >= releaseFrames && now - state.lastSeenAt >= releaseMs);
-    next.set(code, { lastSeenAt: state.lastSeenAt, misses, released });
+    next.set(code, { ...state, misses, released });
   }
 
+  // 検出されたコード：採用の有無に関係なく、最後に見えた時刻を更新して misses を 0 に戻す。
+  // 「離した」かどうか（released）と「受け付けたことがあるか」（everAccepted）は引き継ぐ
+  for (const code of detected) {
+    const state = states.get(code);
+    next.set(code, {
+      lastSeenAt: now,
+      misses: 0,
+      released: state?.released ?? false,
+      everAccepted: state?.everAccepted ?? false,
+    });
+  }
+
+  // 受付の判定は、採用した1件についてだけ行う
   if (picked !== null) {
     const state = states.get(picked);
-    if (state === undefined) {
+    const firstTime = state === undefined || !state.everAccepted;
+    if (firstTime || state.released) {
       accepted = picked;
-      reason = "初出";
-    } else if (state.released) {
-      accepted = picked;
-      reason = "離した後の再受付";
-      sinceLastSeenMs = Math.round(now - state.lastSeenAt);
-      missesAtAccept = state.misses;
+      reason = firstTime ? "初出" : "離した後の再受付";
+      sinceLastSeenMs = state === undefined ? null : Math.round(now - state.lastSeenAt);
+      missesAtAccept = state?.misses ?? 0;
+      next.set(picked, { lastSeenAt: now, misses: 0, released: false, everAccepted: true });
     }
-    // 検出し続けている間は受け付けず、最後に見えた時刻とフレーム数を数え直すだけ
-    next.set(picked, { lastSeenAt: now, misses: 0, released: false });
   }
 
   return { states: next, accepted, reason, sinceLastSeenMs, missesAtAccept };

@@ -88,14 +88,14 @@ describe("1フレームから1件を選ぶ（design.md 6.4）", () => {
 });
 
 describe("スキャンの重複防止（判定の純粋関数。design.md 6.4）", () => {
-  type Frame = { picked: string | null; at: number };
+  type Frame = { codes: string[]; picked: string | null; at: number };
 
   const run = (frames: Frame[], from: ScanStates = new Map()) => {
     let states = from;
     const accepted: string[] = [];
     const reasons: (string | null)[] = [];
     for (const frame of frames) {
-      const decision = nextScanState(states, frame.picked, frame.at);
+      const decision = nextScanState(states, frame.codes, frame.picked, frame.at);
       states = decision.states;
       if (decision.accepted !== null) {
         accepted.push(decision.accepted);
@@ -105,34 +105,64 @@ describe("スキャンの重複防止（判定の純粋関数。design.md 6.4）
     return { states, accepted, reasons };
   };
 
-  const repeat = (picked: string | null, count: number, from = 0, step = 250): Frame[] =>
-    Array.from({ length: count }, (_, i) => ({ picked, at: from + i * step }));
+  // 同じ1件を検出し続けるフレーム列
+  const holding = (code: string | null, count: number, from = 0, step = 250): Frame[] =>
+    Array.from({ length: count }, (_, i) => ({
+      codes: code === null ? [] : [code],
+      picked: code,
+      at: from + i * step,
+    }));
 
-  it("test_extra_ 早見表が2枚写り、採用が常に同じコードなら受付は1回", () => {
-    // [1002, 1004] と [1004, 1002] が交互に来ても、中心に近い 1004 が採用され続ける
-    const frames = Array.from({ length: 40 }, (_, i) => ({ picked: "1004", at: i * 250 }));
-    const { accepted } = run(frames);
+  it("test_extra_ 早見表が2枚写り、中心が常に同じなら受付は1回。両方の状態を持つ", () => {
+    // [1002, 1004] と [1004, 1002] が交互に来ても、中心に近い 1004 だけを判定する
+    const frames: Frame[] = Array.from({ length: 40 }, (_, i) => ({
+      codes: i % 2 === 0 ? ["1002", "1004"] : ["1004", "1002"],
+      picked: "1004",
+      at: i * 250,
+    }));
+    const { accepted, states } = run(frames);
     expect(accepted).toEqual(["1004"]);
+    // 2つとも見えているので、どちらも misses は 0 のまま管理される
+    expect(states.size).toBe(2);
+    expect(states.get("1002")?.misses).toBe(0);
+    expect(states.get("1004")?.misses).toBe(0);
   });
 
-  it("test_extra_ 採用コードが A→B→A→B と入れ替わっても、受付は各1回だけ", () => {
-    const frames = Array.from({ length: 40 }, (_, i) => ({ picked: i % 2 === 0 ? "1002" : "1004", at: i * 250 }));
-    const { accepted, reasons } = run(frames);
+  it("test_extra_ 2枚写ったまま中心が A→B→A→B と入れ替わっても、受付は各1回だけ", () => {
+    const frames: Frame[] = Array.from({ length: 40 }, (_, i) => ({
+      codes: ["1002", "1004"],
+      picked: i % 2 === 0 ? "1002" : "1004",
+      at: i * 250,
+    }));
+    const { accepted, reasons, states } = run(frames);
     expect(accepted).toEqual(["1002", "1004"]);
     expect(reasons).toEqual(["初出", "初出"]);
+    expect(states.size).toBe(2);
+  });
+
+  it("test_extra_ 採用されなかったコードは、写っている間 misses が増えない", () => {
+    const { states } = run([
+      { codes: ["1002", "1004"], picked: "1004", at: 0 },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        codes: ["1002", "1004"],
+        picked: "1004",
+        at: (i + 1) * 250,
+      })),
+    ]);
+    expect(states.get("1002")).toEqual({ lastSeenAt: 5000, misses: 0, released: false, everAccepted: false });
   });
 
   it("test_extra_ 同じコードを 250ms 間隔で 40回検出しても、受付は1回", () => {
-    const { accepted, reasons } = run(repeat("1001", 40));
+    const { accepted, reasons } = run(holding("1001", 40));
     expect(accepted).toEqual(["1001"]);
     expect(reasons).toEqual(["初出"]);
   });
 
   it("test_extra_ 未検出が5フレーム・1000ms 以上続いたあとに検出したら、受付は2回", () => {
     const { accepted, reasons } = run([
-      { picked: "1001", at: 0 },
-      ...repeat(null, SCAN_RELEASE_FRAMES, 250),
-      { picked: "1001", at: 1500 },
+      ...holding("1001", 1),
+      ...holding(null, SCAN_RELEASE_FRAMES, 250),
+      ...holding("1001", 1, 1500),
     ]);
     expect(accepted).toEqual(["1001", "1001"]);
     expect(reasons).toEqual(["初出", "離した後の再受付"]);
@@ -140,17 +170,17 @@ describe("スキャンの重複防止（判定の純粋関数。design.md 6.4）
 
   it("test_extra_ 未検出が4フレームだけなら、受付は1回のまま", () => {
     const { accepted } = run([
-      { picked: "1001", at: 0 },
-      ...repeat(null, SCAN_RELEASE_FRAMES - 1, 250),
-      { picked: "1001", at: 1500 },
+      ...holding("1001", 1),
+      ...holding(null, SCAN_RELEASE_FRAMES - 1, 250),
+      ...holding("1001", 1, 1500),
     ]);
     expect(accepted).toEqual(["1001"]);
   });
 
   it("test_extra_ 別のコードならすぐ受け付ける（A → B で2回）", () => {
     const { accepted, reasons } = run([
-      { picked: "1001", at: 0 },
-      { picked: "2001", at: 250 },
+      { codes: ["1001"], picked: "1001", at: 0 },
+      { codes: ["2001"], picked: "2001", at: 250 },
     ]);
     expect(accepted).toEqual(["1001", "2001"]);
     expect(reasons).toEqual(["初出", "初出"]);
@@ -158,50 +188,36 @@ describe("スキャンの重複防止（判定の純粋関数。design.md 6.4）
 
   it("test_extra_ 時間がたっていても、未検出フレームが5回に満たなければ受け付けない", () => {
     const { accepted } = run([
-      { picked: "1001", at: 0 },
-      ...repeat(null, SCAN_RELEASE_FRAMES - 1, 1000, 1000),
-      { picked: "1001", at: 10000 },
+      ...holding("1001", 1),
+      ...holding(null, SCAN_RELEASE_FRAMES - 1, 1000, 1000),
+      ...holding("1001", 1, 10000),
     ]);
     expect(accepted).toEqual(["1001"]);
   });
 
   it("test_extra_ フレーム数が足りていても、1000ms たっていなければ受け付けない", () => {
-    const { accepted } = run([
-      { picked: "1001", at: 0 },
-      ...repeat(null, 10, 50, 50),
-      { picked: "1001", at: 600 },
-    ]);
+    const { accepted } = run([...holding("1001", 1), ...holding(null, 10, 50, 50), ...holding("1001", 1, 600)]);
     expect(accepted).toEqual(["1001"]);
   });
 
-  it("test_extra_ 別のコードを採用している間も、未検出のコードは数えられる", () => {
-    // 1002 を採用し続けると、1001 は未検出として数えられ、離したと判定される
-    const { accepted } = run([
-      { picked: "1001", at: 0 },
-      ...Array.from({ length: SCAN_RELEASE_FRAMES }, (_, i) => ({ picked: "1002", at: (i + 1) * 250 })),
-      { picked: "1001", at: 1500 },
-    ]);
-    expect(accepted).toEqual(["1001", "1002", "1001"]);
-  });
-
   it("test_extra_ 受け付けたときに、前回の検出からの経過時間と misses を返す（ログ用）", () => {
-    let states: ScanStates = nextScanState(new Map(), "1001", 0).states;
+    let states: ScanStates = nextScanState(new Map(), ["1001"], "1001", 0).states;
     for (let i = 1; i <= SCAN_RELEASE_FRAMES; i += 1) {
-      states = nextScanState(states, null, i * 250).states;
+      states = nextScanState(states, [], null, i * 250).states;
     }
-    const decision = nextScanState(states, "1001", 1500);
+    const decision = nextScanState(states, ["1001"], "1001", 1500);
     expect(decision.accepted).toBe("1001");
     expect(decision.sinceLastSeenMs).toBe(1500);
     expect(decision.missesAtAccept).toBe(SCAN_RELEASE_FRAMES);
   });
 
   it("test_extra_ 長く見えないコードは状態から消える", () => {
-    const { states } = run([{ picked: "1001", at: 0 }, ...repeat(null, SCAN_FORGET_FRAMES, 250)]);
+    const { states } = run([...holding("1001", 1), ...holding(null, SCAN_FORGET_FRAMES, 250)]);
     expect(states.size).toBe(0);
   });
 
   it("test_extra_ 何も読めないフレームだけでは何も受け付けない", () => {
-    const { accepted, states } = run(repeat(null, 20));
+    const { accepted, states } = run(holding(null, 20));
     expect(accepted).toEqual([]);
     expect(states.size).toBe(0);
   });
