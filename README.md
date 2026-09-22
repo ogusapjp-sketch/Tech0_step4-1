@@ -9,9 +9,9 @@ Tech0プログラム Step4 の課題成果物として作成しました。
 
 | 文書 | 内容 | V字モデル上の工程 | PDF |
 |---|---|---|---|
-| [要件定義書（Lv2）](./requirements.md) | 要求 REQ-01〜11 から機能要件・非機能要件を導出。業務要件、Lv1→Lv2 の変更点、検証計画を含む | 要件定義 | [v1.0](./requirements_v1.0.pdf) |
-| [設計仕様書（Lv2）](./design.md) | BFF 方式のシステム構成、UML（アクティビティ図・シーケンス図・クラス図）、ER図、API設計、セキュリティ設計 | 基本設計・詳細設計 | [v1.4](./design_v1.4.pdf) |
-| [テスト仕様書（Lv2）](./test_spec.md) | 単体（pytest／jest）・結合・機能・ユーザーテストのケース223件。観点×技法で設計し、期待値は人間が決定 | 単体・結合・システム・受入テスト | [v1.3](./test_spec_v1.3.pdf) |
+| [要件定義書（Lv2）](./requirements.md)（v1.0） | 要求 REQ-01〜11 から機能要件・非機能要件を導出。業務要件、Lv1→Lv2 の変更点、検証計画を含む | 要件定義 | [v1.0](./requirements_v1.0.pdf) |
+| [設計仕様書（Lv2）](./design.md)（v1.8） | BFF 方式のシステム構成、UML（アクティビティ図・シーケンス図・クラス図）、ER図、API設計、セキュリティ設計、スキャン判定 | 基本設計・詳細設計 | [v1.4（最新版は Markdown）](./design_v1.4.pdf) |
+| [テスト仕様書（Lv2）](./test_spec.md)（v1.4） | 単体（pytest／jest）・結合・機能・ユーザーテストのケース227件。観点×技法で設計し、期待値は人間が決定 | 単体・結合・システム・受入テスト | [v1.3（最新版は Markdown）](./test_spec_v1.3.pdf) |
 | バーコード早見表（テスト用） | テストデータの商品12点・会員2名の Code128 バーコード。印刷してカメラでの読み取り確認に使う | 結合・機能・ユーザーテスト | [PDF](./docs/barcodes_test_data.pdf) |
 
 図はすべて Mermaid で記述しており、GitHub 上でそのまま描画されます。PDF 版では図を画像として埋め込んでいます。
@@ -31,7 +31,7 @@ Tech0プログラム Step4 の課題成果物として作成しました。
 | REQ-06 購入後のリセットと再開 | 済 | `cartReducer` の RESET、完了ポップアップを閉じたときの購入リスト・会員情報のクリア | 単体 UT-F-34／結合 IT-21、26 |
 | REQ-07 購入履歴の保存 | 済 | `SqlTransactionRepository`、`models/tables.py`、`schema.sql` の `transaction`／`transaction_detail`。明細に購入時点の単価・値引き額・税率を転記 | 単体の対象関数なし（test_spec.md 7.1）／結合 IT-29〜35 |
 | REQ-08 税率の可変 | 済 | `SqlTaxRateRepository`（適用開始日で選択）、`routers/settings.py`、税率は万分率の整数（`tax_rate_bp`） | 単体 UT-B-24〜26、UT-F-05／結合 IT-31 |
-| REQ-09 バーコードによる商品登録 | 済 | `BarcodeScanner`（Barcode Detection API を第一候補、非対応時は ZXing にフォールバック。Code128）、連続スキャンの間隔制御（`scanCooldown.ts`） | 単体 UT-F-19〜22／結合 IT-11〜13、27 |
+| REQ-09 バーコードによる商品登録 | 済 | `BarcodeScanner`（Barcode Detection API を第一候補、非対応時は ZXing にフォールバック。Code128）、重複受付の防止（`scanGate.ts`。1フレームに複数写る場合は中心に最も近い1件を採用し、3フレーム連続採用で受け付ける。design.md 6.4） | 単体 UT-F-19〜22、UT-F-42〜45／結合 IT-11〜13、27 |
 | REQ-10 購入リストの選択・削除・数量変更 | 済 | `cartReducer`（排他選択、削除、数量1〜99、1行あたり99個・50行の上限）、`CartList`、`SelectedLinePanel` | 単体 UT-F-23〜33／結合 IT-24 |
 | REQ-11 会員特典の値引き | 済 | `PricingService.apply_discount`（割合は1個ごとに切り捨ててから数量倍、金額は単価が上限、値引きは税の前、重複時は大きい方）、`SqlCampaignRepository`、購入リストへの値引き額表示 | 単体 UT-B-01〜17、UT-B-87、UT-F-08〜09／結合 IT-07、14、22 |
 
@@ -41,8 +41,8 @@ Tech0プログラム Step4 の課題成果物として作成しました。
 
 | テストレベル | 件数 | カバレッジ | 結果 |
 |---|---|---|---|
-| 単体（バックエンド pytest） | 261件（UT-B-01〜87 とケース ID のない補助テスト） | Statements 100%・Branch 100%（DB 接続とリポジトリは対象外。test_spec.md 2.5） | 合格 |
-| 単体（フロントエンド jest） | 191件（UT-F-01〜41 と補助テスト） | Statements 99.52%・Branch 97.30% | 合格 |
+| 単体（バックエンド pytest） | 261件（UT-B-01〜87 と補助テスト） | Statements 100%・Branch 100%（DB 接続とリポジトリは対象外。test_spec.md 2.5） | 合格 |
+| 単体（フロントエンド jest） | 220件（UT-F-01〜45 と補助テスト） | Statements 99.18%・Branch 96.12% | 合格 |
 | 結合（IT） | IT-01〜37（自動28、手動9） | — | 合格 |
 | 機能（ST）・ユーザー（UAT） | ST-01〜41、UAT-01〜18 | — | 未実施 |
 
