@@ -129,6 +129,28 @@ describe("スキャンの重複防止（一度離すまで同じコードを受�
     expect(gate.accept(["2001"], 400)).toEqual([]);
   });
 
+  it("test_extra_ 判定の状態を取り出せる（開発環境の表示用）", () => {
+    const gate = createScanGate();
+    expect(gate.state()).toBeNull();
+    expect(gate.lastAccept()).toBeNull();
+
+    gate.accept(["1001"], 0);
+    expect(gate.state()).toEqual({ code: "1001", lastSeenAt: 0, misses: 0 });
+    expect(gate.lastAccept()).toEqual({ code: "1001", sinceLastSeenMs: null, misses: 0 });
+
+    gate.accept([], 200);
+    gate.accept([], 400);
+    expect(gate.state()).toEqual({ code: "1001", lastSeenAt: 0, misses: 2 });
+  });
+
+  it("test_extra_ 受け付けたときに、前回の検出からの経過時間と misses を記録する（ログ用）", () => {
+    const gate = createScanGate();
+    gate.accept(["1001"], 0);
+    frames(gate, 0, SCAN_RELEASE_FRAMES); // 200〜1000ms は読めない
+    gate.accept(["1001"], 1200);
+    expect(gate.lastAccept()).toEqual({ code: "1001", sinceLastSeenMs: 1200, misses: SCAN_RELEASE_FRAMES });
+  });
+
   it("test_extra_ 何も読めないフレームだけでは何も受け付けない", () => {
     expect(createScanGate().accept([], 1000)).toEqual([]);
   });

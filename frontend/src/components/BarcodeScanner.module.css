@@ -23,3 +23,30 @@
   font-size: 0.875rem;
   color: #b42318;
 }
+
+/* 開発環境だけの表示（design.md 6.4）。本番では描画しない */
+.diagnostics {
+  margin: 0.25rem 0 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed #9aa0a6;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #3c4043;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.diagnostics > div {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.diagnostics dt {
+  color: #5f6368;
+}
+
+.diagnostics dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

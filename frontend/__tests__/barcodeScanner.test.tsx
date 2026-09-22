@@ -256,6 +256,94 @@ describe("Barcode Detection API（第一候補）", () => {
   });
 });
 
+describe("開発環境の状態表示（design.md 6.4）", () => {
+  it("test_extra_ debug のときは経路・読み取り回数・misses・受付回数を表示する", async () => {
+    installBarcodeDetector(["code_128"]);
+    let now = 0;
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    render(<BarcodeScanner onDetect={jest.fn()} now={() => now} debug />);
+    await flush();
+
+    // 5フレーム（1秒ぶん）読み取り、そのうち後半3フレームは読めない
+    for (const codes of [["1001"], [], [], []]) {
+      now += 200;
+      detector.detect.mockResolvedValue(codes.map((rawValue) => ({ rawValue })));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(200);
+      });
+    }
+    now += 100;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(100);
+    });
+
+    const panel = screen.getByLabelText("読み取りの状態（開発用）");
+    expect(panel).toHaveTextContent("BarcodeDetector");
+    expect(panel).toHaveTextContent("1001");
+    expect(panel).toHaveTextContent("misses");
+    expect(panel).toHaveTextContent("3"); // 読めなかったフレーム数
+    expect(panel).toHaveTextContent("1回"); // 受け付けた回数
+  });
+
+  it("test_extra_ まだ何も読めていないときは「—」を表示する", async () => {
+    installBarcodeDetector(["code_128"]);
+    let now = 0;
+    detector.detect.mockResolvedValue([]);
+    render(<BarcodeScanner onDetect={jest.fn()} now={() => now} debug />);
+    await flush();
+    now = 600;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(600);
+    });
+
+    const panel = screen.getByLabelText("読み取りの状態（開発用）");
+    expect(panel).toHaveTextContent("—");
+    expect(panel).toHaveTextContent("0回");
+  });
+
+  it("test_extra_ debug のときは受け付けるたびにコンソールへ出す", async () => {
+    installBarcodeDetector(["code_128"]);
+    const info = jest.spyOn(console, "info").mockImplementation(() => {});
+    let now = 0;
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    render(<BarcodeScanner onDetect={jest.fn()} now={() => now} debug />);
+    await flush();
+
+    // 5フレーム読めない状態が続いてから、もう一度検出する
+    for (let i = 0; i < 5; i += 1) {
+      now += 200;
+      detector.detect.mockResolvedValue([]);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(200);
+      });
+    }
+    now += 200;
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(200);
+    });
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("[scan] 受付 1001"));
+    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("misses=5"));
+  });
+
+  it("test_extra_ 本番（debug なし）では表示もコンソール出力もしない", async () => {
+    installBarcodeDetector(["code_128"]);
+    const info = jest.spyOn(console, "info").mockImplementation(() => {});
+    let now = 0;
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    render(<BarcodeScanner onDetect={jest.fn()} now={() => now} />);
+    await flush();
+    now = 1000;
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(screen.queryByLabelText("読み取りの状態（開発用）")).not.toBeInTheDocument();
+    expect(info).not.toHaveBeenCalled();
+  });
+});
+
 describe("ZXing（非対応ブラウザでの代替）", () => {
   const controls = { stop: jest.fn() };
 

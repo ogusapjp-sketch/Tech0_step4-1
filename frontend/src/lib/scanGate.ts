@@ -9,21 +9,40 @@
 export const SCAN_RELEASE_MS = 1000;
 export const SCAN_RELEASE_FRAMES = 5;
 
+/** 直近に受け付けたコードと、最後に見えた時刻・そのあと連続して見えなかったフレーム数 */
+export type Held = { code: string; lastSeenAt: number; misses: number };
+
+/** 受け付けたときの記録。開発環境のログに使う */
+export type AcceptInfo = {
+  code: string;
+  /** 前回そのコードを検出してからの経過ミリ秒。初回は null */
+  sinceLastSeenMs: number | null;
+  /** 受け付けた時点で、連続して検出されなかったフレーム数 */
+  misses: number;
+};
+
 export type ScanGate = {
   /** 映像1フレーム分の読み取り結果（読めなければ空）を渡し、受け付けるコードだけを返す */
   accept: (detected: readonly string[], now: number) => string[];
+  /** 判定の状態。開発環境の表示に使う */
+  state: () => Held | null;
+  /** 直近に受け付けたときの記録。開発環境のログに使う */
+  lastAccept: () => AcceptInfo | null;
 };
-
-type Held = { code: string; lastSeenAt: number; misses: number };
 
 export const createScanGate = (
   releaseMs: number = SCAN_RELEASE_MS,
   releaseFrames: number = SCAN_RELEASE_FRAMES,
 ): ScanGate => {
-  // 直近に受け付けたコードと、最後に見えた時刻・そのあと連続して見えなかったフレーム数
   let held: Held | null = null;
+  // 解除した（＝一度離したと判断した）ときの状態と、直近に受け付けたときの記録
+  let released: Held | null = null;
+  let accepted: AcceptInfo | null = null;
 
   return {
+    state: () => (held === null ? null : { ...held }),
+    lastAccept: () => (accepted === null ? null : { ...accepted }),
+
     accept(detected, now) {
       if (held !== null) {
         if (detected.includes(held.code)) {
@@ -31,22 +50,31 @@ export const createScanGate = (
           held = { code: held.code, lastSeenAt: now, misses: 0 };
         } else {
           const misses = held.misses + 1;
-          held =
-            now - held.lastSeenAt >= releaseMs && misses >= releaseFrames
-              ? null // 一度離したと判断する
-              : { ...held, misses };
+          if (now - held.lastSeenAt >= releaseMs && misses >= releaseFrames) {
+            // 一度離したと判断する。解除したときの状態は、次に受け付けたときのログのために残す
+            released = { ...held, misses };
+            held = null;
+          } else {
+            held = { ...held, misses };
+          }
         }
       }
 
-      const accepted: string[] = [];
+      const codes: string[] = [];
       for (const code of detected) {
         if (held?.code === code) {
           continue;
         }
-        accepted.push(code);
+        const from = released !== null && released.code === code ? released : null;
+        accepted = {
+          code,
+          sinceLastSeenMs: from === null ? null : Math.round(now - from.lastSeenAt),
+          misses: from === null ? 0 : from.misses,
+        };
+        codes.push(code);
         held = { code, lastSeenAt: now, misses: 0 };
       }
-      return accepted;
+      return codes;
     },
   };
 };

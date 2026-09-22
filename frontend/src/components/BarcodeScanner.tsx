@@ -22,7 +22,21 @@ type Props = {
   onDetect: (code: string) => void;
   // 重複防止の時刻。テストで差し替える
   now?: () => number;
+  // 開発環境のときだけ、判定の状態を画面とコンソールに出す（design.md 6.4）。本番では渡さない
+  debug?: boolean;
 };
+
+// 開発環境の表示に出す値
+type Diagnostics = {
+  frames: number; // 読み取りループの実行回数（累計）
+  framesPerSecond: number;
+  accepted: number; // 受け付けた（追加が発生した）回数
+  lastCode: string | null;
+  sinceLastSeenMs: number | null;
+  misses: number;
+};
+
+const DIAGNOSTICS_INTERVAL_MS = 500;
 
 // 映像1フレーム分の読み取り結果（何も読めなければ空）
 type OnFrame = (codes: string[]) => void;
@@ -93,23 +107,57 @@ const startZxingScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Pro
   };
 };
 
-export function BarcodeScanner({ onDetect, now = () => performance.now() }: Props) {
+export function BarcodeScanner({ onDetect, now = () => performance.now(), debug = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [status, setStatus] = useState<Status>("starting");
   const [engine, setEngine] = useState<Engine | null>(null);
   const onDetectRef = useRef(onDetect);
   const nowRef = useRef(now);
+  const debugRef = useRef(debug);
   // 重複防止の状態（最後に見えた時刻・見えなかったフレーム数）は作り直さない。
   // 再描画で消えないよう ref に保持し、コンポーネントごと作り直された場合に備えて画面で1つの実体を共有する
   const gateRef = useRef<ScanGate | null>(null);
   if (gateRef.current === null) {
     gateRef.current = getSharedScanGate();
   }
+  // 開発環境の表示用。フレームごとに再描画しないよう、数えるだけにして一定間隔で画面に反映する
+  const countsRef = useRef({ frames: 0, accepted: 0, lastShownAt: 0, lastShownFrames: 0 });
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
 
   useEffect(() => {
     onDetectRef.current = onDetect;
     nowRef.current = now;
+    debugRef.current = debug;
   });
+
+  // 開発環境のときだけ、判定の状態を定期的に画面へ反映する
+  useEffect(() => {
+    if (!debug) {
+      return;
+    }
+    const gate = gateRef.current as ScanGate;
+    const counts = countsRef.current;
+    counts.lastShownAt = nowRef.current();
+    counts.lastShownFrames = counts.frames;
+
+    const timer = setInterval(() => {
+      const at = nowRef.current();
+      const elapsed = at - counts.lastShownAt;
+      const framesPerSecond = elapsed > 0 ? ((counts.frames - counts.lastShownFrames) * 1000) / elapsed : 0;
+      counts.lastShownAt = at;
+      counts.lastShownFrames = counts.frames;
+      const held = gate.state();
+      setDiagnostics({
+        frames: counts.frames,
+        framesPerSecond: Math.round(framesPerSecond * 10) / 10,
+        accepted: counts.accepted,
+        lastCode: held?.code ?? null,
+        sinceLastSeenMs: held === null ? null : Math.round(at - held.lastSeenAt),
+        misses: held?.misses ?? 0,
+      });
+    }, DIAGNOSTICS_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [debug]);
 
   useEffect(() => {
     const video = videoRef.current as HTMLVideoElement;
@@ -122,7 +170,24 @@ export function BarcodeScanner({ onDetect, now = () => performance.now() }: Prop
       if (cancelled) {
         return;
       }
-      for (const code of gate.accept(codes, nowRef.current())) {
+      const at = nowRef.current();
+      countsRef.current.frames += 1;
+      const accepted = gate.accept(codes, at);
+      if (accepted.length === 0) {
+        return;
+      }
+      countsRef.current.accepted += accepted.length;
+      if (debugRef.current) {
+        const info = gate.lastAccept();
+        const elapsed = info?.sinceLastSeenMs;
+        // eslint-disable-next-line no-console
+        console.info(
+          `[scan] 受付 ${info?.code ?? accepted[0]}（前回の検出から ${
+            elapsed == null ? "—" : `${elapsed}ms`
+          }、misses=${info?.misses ?? 0}）`,
+        );
+      }
+      for (const code of accepted) {
         onDetectRef.current(code);
       }
     };
@@ -165,6 +230,34 @@ export function BarcodeScanner({ onDetect, now = () => performance.now() }: Prop
     <section className={styles.scanner} aria-label="カメラ">
       <video ref={videoRef} className={styles.video} muted playsInline />
       <p className={status === "unavailable" ? styles.unavailable : styles.status}>{statusText}</p>
+      {debug && diagnostics !== null ? (
+        <dl className={styles.diagnostics} aria-label="読み取りの状態（開発用）">
+          <div>
+            <dt>経路</dt>
+            <dd>{engine ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>読み取り/秒</dt>
+            <dd>{`${diagnostics.framesPerSecond}（累計 ${diagnostics.frames}）`}</dd>
+          </div>
+          <div>
+            <dt>最後に検出</dt>
+            <dd>
+              {diagnostics.lastCode === null
+                ? "—"
+                : `${diagnostics.lastCode}（${diagnostics.sinceLastSeenMs}ms 前）`}
+            </dd>
+          </div>
+          <div>
+            <dt>misses</dt>
+            <dd>{diagnostics.misses}</dd>
+          </div>
+          <div>
+            <dt>受付</dt>
+            <dd>{`${diagnostics.accepted}回`}</dd>
+          </div>
+        </dl>
+      ) : null}
     </section>
   );
 }

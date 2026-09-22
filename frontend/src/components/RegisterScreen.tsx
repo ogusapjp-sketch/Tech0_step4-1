@@ -38,9 +38,11 @@ type Props = {
   staff: StaffIdentity | null;
   // 冪等キーの生成。テストで差し替える
   generateKey?: () => string;
+  // 開発環境のときだけ、読み取りの状態を画面とコンソールに出す（design.md 6.4）
+  debug?: boolean;
 };
 
-export function RegisterScreen({ staff, generateKey = () => crypto.randomUUID() }: Props) {
+export function RegisterScreen({ staff, generateKey = () => crypto.randomUUID(), debug = false }: Props) {
   const router = useRouter();
   const [cart, setCart] = useState<CartState>(initialCartState);
   // 連続スキャンで非同期の結果が続けて届いても取りこぼさないよう、最新の状態を同期的に持つ
@@ -271,7 +273,7 @@ export function RegisterScreen({ staff, generateKey = () => crypto.randomUUID() 
     <div className={styles.screen}>
       <StaffBar staff={staff} onLogout={onLogout} />
       <main className={styles.main}>
-        <BarcodeScanner onDetect={onScan} />
+        <BarcodeScanner onDetect={onScan} debug={debug} />
         <MemberPanel
           member={member}
           memberInput={memberInput}
