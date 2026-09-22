@@ -50,3 +50,17 @@ export const createScanGate = (
     },
   };
 };
+
+// 画面で1つだけ持つゲート。コンポーネントが作り直されても（再マウント）状態を失わないようにする。
+// 読み取りは画面に1か所しかないため、共有して問題ない
+let shared: ScanGate | null = null;
+
+export const getSharedScanGate = (): ScanGate => {
+  shared ??= createScanGate();
+  return shared;
+};
+
+/** テスト用。ケースごとに初期状態へ戻す */
+export const resetSharedScanGate = (): void => {
+  shared = null;
+};

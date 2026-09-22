@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { CLIENT_MESSAGES } from "@/lib/messages";
-import { createScanGate } from "@/lib/scanGate";
+import { getSharedScanGate, type ScanGate } from "@/lib/scanGate";
 
 import styles from "./BarcodeScanner.module.css";
 
@@ -52,7 +52,12 @@ const startNativeScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Pr
 
   const tick = async () => {
     try {
-      onFrame((await detector.detect(video)).map((barcode) => barcode.rawValue));
+      const codes = (await detector.detect(video)).map((barcode) => barcode.rawValue);
+      if (stopped) {
+        // 止めたあとに届いたフレームは捨てる（古いループの結果を混ぜない）
+        return;
+      }
+      onFrame(codes);
     } catch {
       // 映像の準備前などは次の周期で読み直す。読めなかったことは「離した」と扱わない
     }
@@ -71,11 +76,21 @@ const startZxingScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Pro
   ]);
   const hints = new Map([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]]]);
   const reader = new BrowserMultiFormatReader(hints);
+  let stopped = false;
   const controls = await reader.decodeFromConstraints(VIDEO_CONSTRAINTS, video, (result) => {
+    if (stopped) {
+      return;
+    }
     // 読めたかどうかに関わらず、1フレームとして必ず渡す。空のフレームが「離した」の判定材料になる
     onFrame(result ? [result.getText()] : []);
   });
-  return { stop: () => controls.stop(), engine: "ZXing" };
+  return {
+    stop: () => {
+      stopped = true;
+      controls.stop();
+    },
+    engine: "ZXing",
+  };
 };
 
 export function BarcodeScanner({ onDetect, now = () => performance.now() }: Props) {
@@ -84,6 +99,12 @@ export function BarcodeScanner({ onDetect, now = () => performance.now() }: Prop
   const [engine, setEngine] = useState<Engine | null>(null);
   const onDetectRef = useRef(onDetect);
   const nowRef = useRef(now);
+  // 重複防止の状態（最後に見えた時刻・見えなかったフレーム数）は作り直さない。
+  // 再描画で消えないよう ref に保持し、コンポーネントごと作り直された場合に備えて画面で1つの実体を共有する
+  const gateRef = useRef<ScanGate | null>(null);
+  if (gateRef.current === null) {
+    gateRef.current = getSharedScanGate();
+  }
 
   useEffect(() => {
     onDetectRef.current = onDetect;
@@ -94,11 +115,14 @@ export function BarcodeScanner({ onDetect, now = () => performance.now() }: Prop
     const video = videoRef.current as HTMLVideoElement;
     let cancelled = false;
     let stopScanner: StopScanner | null = null;
-    const gate = createScanGate();
+    const gate = gateRef.current as ScanGate;
 
     const handleFrame = (codes: string[]) => {
-      const at = nowRef.current();
-      for (const code of gate.accept(codes, at)) {
+      // 片付け済みのループからのフレームは無視する（二重に起動していても追加されない）
+      if (cancelled) {
+        return;
+      }
+      for (const code of gate.accept(codes, nowRef.current())) {
         onDetectRef.current(code);
       }
     };

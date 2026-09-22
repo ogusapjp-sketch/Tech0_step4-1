@@ -2,8 +2,10 @@
 // カメラによるバーコード読み取り（design.md 2.2、requirements.md 5.3・7章④）
 // Code128 を Barcode Detection API で読み、非対応なら ZXing に切り替える（人間が決定）。test_extra_
 import { act, render, screen } from "@testing-library/react";
+import { useState } from "react";
 
 import { BarcodeScanner } from "@/components/BarcodeScanner";
+import { resetSharedScanGate } from "@/lib/scanGate";
 
 const mockDecodeFromConstraints = jest.fn();
 const mockReaderConstructor = jest.fn();
@@ -37,6 +39,7 @@ const flush = async () => {
 };
 
 beforeEach(() => {
+  resetSharedScanGate();
   jest.useFakeTimers();
   jest.clearAllMocks();
   getUserMedia.mockResolvedValue(stream);
@@ -132,6 +135,82 @@ describe("Barcode Detection API（第一候補）", () => {
     });
     expect(onDetect).toHaveBeenNthCalledWith(1, "1001");
     expect(onDetect).toHaveBeenNthCalledWith(2, "2001");
+  });
+
+  it("test_extra_ 追加による再描画をはさんでも、かざしたままなら追加されない", async () => {
+    // 商品を追加すると親が再描画される。そのたびに重複防止の状態が消えないことの確認
+    installBarcodeDetector(["code_128"]);
+    let now = 0;
+    const detected: string[] = [];
+
+    function Harness() {
+      const [lines, setLines] = useState<string[]>([]);
+      return (
+        <div>
+          <p>{`行数:${lines.length}`}</p>
+          <BarcodeScanner
+            onDetect={(code) => {
+              detected.push(code);
+              setLines((current) => [...current, code]); // 追加＝state 更新＝再描画
+            }}
+            now={() => now}
+          />
+        </div>
+      );
+    }
+
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    render(<Harness />);
+    await flush();
+    expect(screen.getByText("行数:1")).toBeInTheDocument();
+
+    // かざしたまま 30フレーム（6秒ぶん）。再描画が起きても追加されない
+    for (let i = 0; i < 30; i += 1) {
+      now += 200;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(200);
+      });
+    }
+    expect(detected).toEqual(["1001"]);
+    expect(screen.getByText("行数:1")).toBeInTheDocument();
+  });
+
+  it("test_extra_ コンポーネントが作り直されても、かざしたままなら追加されない", async () => {
+    // 再マウントで重複防止の状態が消えないことの確認（状態は画面で1つだけ持つ）
+    installBarcodeDetector(["code_128"]);
+    let now = 0;
+    const onDetect = jest.fn();
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    const { unmount } = render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
+    await flush();
+    expect(onDetect).toHaveBeenCalledTimes(1);
+
+    unmount();
+    now = 400;
+    render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
+    await flush();
+    for (let i = 0; i < 10; i += 1) {
+      now += 200;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(200);
+      });
+    }
+    expect(onDetect).toHaveBeenCalledTimes(1);
+  });
+
+  it("test_extra_ 画面を離れたあとのフレームでは追加しない（読み取りループの多重起動を防ぐ）", async () => {
+    installBarcodeDetector(["code_128"]);
+    const onDetect = jest.fn();
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    const { unmount } = render(<BarcodeScanner onDetect={onDetect} now={() => 0} />);
+    await flush();
+    expect(onDetect).toHaveBeenCalledTimes(1);
+
+    unmount();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2000);
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
   });
 
   it("test_extra_ 読み取りに失敗しても止まらない", async () => {
