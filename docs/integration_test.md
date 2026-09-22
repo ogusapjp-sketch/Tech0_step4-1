@@ -106,6 +106,7 @@ cd backend && .venv/bin/pytest tests/integration -m dbpause -v && cd ..
 2. ケースごとに 1.2 のテストデータ初期化を実行する
 3. ブラウザのシークレットウィンドウで **http://localhost:3000** を開く（前のケースの Cookie を残さないため。ケースごとに開き直す）
 4. 商品の手入力は2段階：商品コード欄に入力 →「照会」→ 名称・単価が表示される →「追加」
+5. カメラで試す場合は `docs/barcodes_test_data.pdf`（テストデータのバーコード早見表）を印刷する
 
 ログイン情報（test_spec.md 3.1）：S001／`ramen-owner-2026`、S002／`part-timer-0001`
 
