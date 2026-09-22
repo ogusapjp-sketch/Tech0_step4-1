@@ -2,6 +2,8 @@
 interface DetectedBarcode {
   rawValue: string;
   format: string;
+  // 映像内の位置。1フレームに複数写ったとき、中心に近いものを選ぶのに使う（design.md 6.4）
+  boundingBox: DOMRectReadOnly;
 }
 
 interface BarcodeDetectorOptions {

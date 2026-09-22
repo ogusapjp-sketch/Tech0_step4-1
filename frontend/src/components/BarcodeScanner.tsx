@@ -5,7 +5,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { CLIENT_MESSAGES } from "@/lib/messages";
-import { getSharedScanStateRef, nextScanState, type AcceptReason } from "@/lib/scanGate";
+import {
+  getSharedScanStatesRef,
+  nextScanState,
+  pickCenterMost,
+  type AcceptReason,
+  type ScannedBarcode,
+} from "@/lib/scanGate";
 
 import styles from "./BarcodeScanner.module.css";
 
@@ -31,17 +37,20 @@ type Diagnostics = {
   frames: number; // 読み取りループの実行回数（累計）
   framesPerSecond: number;
   accepted: number; // 受け付けた（追加が発生した）回数
-  lastCode: string | null;
+  detectedCount: number; // このフレームの検出数
+  detectedCodes: string[]; // このフレームで検出したコードの一覧
+  picked: string | null; // 採用したコード（中心に最も近いもの）
   sinceLastSeenMs: number | null;
   misses: number;
   released: boolean;
+  tracked: number; // 状態を持っているコード数
   lastReason: AcceptReason | null;
 };
 
 const DIAGNOSTICS_INTERVAL_MS = 500;
 
-// 映像1フレーム分の読み取り結果（何も読めなければ空）
-type OnFrame = (codes: string[]) => void;
+// 映像1フレーム分の読み取り結果（何も読めなければ空）。複数写ることがある
+type OnFrame = (barcodes: ScannedBarcode[]) => void;
 
 const supportsNativeCode128 = async (): Promise<boolean> => {
   const Detector = window.BarcodeDetector;
@@ -68,12 +77,15 @@ const startNativeScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Pr
 
   const tick = async () => {
     try {
-      const codes = (await detector.detect(video)).map((barcode) => barcode.rawValue);
+      const barcodes = (await detector.detect(video)).map((barcode) => ({
+        rawValue: barcode.rawValue,
+        boundingBox: barcode.boundingBox,
+      }));
       if (stopped) {
         // 止めたあとに届いたフレームは捨てる（古いループの結果を混ぜない）
         return;
       }
-      onFrame(codes);
+      onFrame(barcodes);
     } catch {
       // 映像の準備前などは次の周期で読み直す。読めなかったことは「離した」と扱わない
     }
@@ -98,7 +110,8 @@ const startZxingScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Pro
       return;
     }
     // 読めたかどうかに関わらず、1フレームとして必ず渡す。空のフレームが「離した」の判定材料になる
-    onFrame(result ? [result.getText()] : []);
+    // ZXing は1フレームにつき1件しか返さないため、そのまま採用される
+    onFrame(result ? [{ rawValue: result.getText() }] : []);
   });
   return {
     stop: () => {
@@ -120,8 +133,9 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
   // 再描画で消えないよう ref に保持し、コンポーネントごと作り直された場合に備えて画面で1つの実体を共有する
   // lastCode・lastSeenAt・misses・released は ref で保持する。再描画でも、
   // カメラの部品が作り直されても失わないよう、画面で1つの入れ物を共有する
-  const stateRef = useRef(getSharedScanStateRef());
+  const statesRef = useRef(getSharedScanStatesRef());
   const lastReasonRef = useRef<AcceptReason | null>(null);
+  const lastFrameRef = useRef<{ codes: string[]; picked: string | null }>({ codes: [], picked: null });
   // 開発環境の表示用。フレームごとに再描画しないよう、数えるだけにして一定間隔で画面に反映する
   const countsRef = useRef({ frames: 0, accepted: 0, lastShownAt: 0, lastShownFrames: 0 });
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
@@ -137,7 +151,7 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
     if (!debug) {
       return;
     }
-    const scanState = stateRef.current;
+    const scanStates = statesRef.current;
     const counts = countsRef.current;
     counts.lastShownAt = nowRef.current();
     counts.lastShownFrames = counts.frames;
@@ -148,15 +162,19 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
       const framesPerSecond = elapsed > 0 ? ((counts.frames - counts.lastShownFrames) * 1000) / elapsed : 0;
       counts.lastShownAt = at;
       counts.lastShownFrames = counts.frames;
-      const held = scanState.current;
+      const frame = lastFrameRef.current;
+      const state = frame.picked === null ? undefined : scanStates.current.get(frame.picked);
       setDiagnostics({
         frames: counts.frames,
         framesPerSecond: Math.round(framesPerSecond * 10) / 10,
         accepted: counts.accepted,
-        lastCode: held.lastCode,
-        sinceLastSeenMs: held.lastCode === null ? null : Math.round(at - held.lastSeenAt),
-        misses: held.misses,
-        released: held.released,
+        detectedCount: frame.codes.length,
+        detectedCodes: frame.codes,
+        picked: frame.picked,
+        sinceLastSeenMs: state === undefined ? null : Math.round(at - state.lastSeenAt),
+        misses: state?.misses ?? 0,
+        released: state?.released ?? false,
+        tracked: scanStates.current.size,
         lastReason: lastReasonRef.current,
       });
     }, DIAGNOSTICS_INTERVAL_MS);
@@ -167,35 +185,36 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
     const video = videoRef.current as HTMLVideoElement;
     let cancelled = false;
     let stopScanner: StopScanner | null = null;
-    const scanState = stateRef.current;
+    const scanStates = statesRef.current;
 
     // BarcodeDetector・ZXing のどちらの経路も、このひとつの関数を通る
-    const handleFrame = (codes: string[]) => {
+    const handleFrame = (barcodes: ScannedBarcode[]) => {
       // 片付け済みのループからのフレームは無視する（二重に起動していても追加されない）
       if (cancelled) {
         return;
       }
       const at = nowRef.current();
       countsRef.current.frames += 1;
-      const decision = nextScanState(scanState.current, codes, at);
-      scanState.current = decision.state;
-      if (decision.accepted.length === 0) {
+      // 1フレームに複数写っていたら、映像の中心に最も近い1件だけを採用する
+      const picked = pickCenterMost(barcodes, video.videoWidth, video.videoHeight);
+      lastFrameRef.current = { codes: barcodes.map((barcode) => barcode.rawValue), picked };
+      const decision = nextScanState(scanStates.current, picked, at);
+      scanStates.current = decision.states;
+      if (decision.accepted === null) {
         return;
       }
-      countsRef.current.accepted += decision.accepted.length;
+      countsRef.current.accepted += 1;
       lastReasonRef.current = decision.reason;
       if (debugRef.current) {
         const elapsed = decision.sinceLastSeenMs;
         // eslint-disable-next-line no-console
         console.info(
-          `[scan] 受付 ${decision.accepted[0]}（${decision.reason}、前回の検出から ${
+          `[scan] 受付 ${decision.accepted}（${decision.reason}、前回の検出から ${
             elapsed === null ? "—" : `${elapsed}ms`
           }、misses=${decision.missesAtAccept}）`,
         );
       }
-      for (const code of decision.accepted) {
-        onDetectRef.current(code);
-      }
+      onDetectRef.current(decision.accepted);
     };
 
     const start = async () =>
@@ -247,12 +266,22 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
             <dd>{`${diagnostics.framesPerSecond}（累計 ${diagnostics.frames}）`}</dd>
           </div>
           <div>
-            <dt>最後に検出</dt>
+            <dt>検出数</dt>
+            <dd>{`${diagnostics.detectedCount}（${
+              diagnostics.detectedCodes.length === 0 ? "—" : diagnostics.detectedCodes.join(" / ")
+            }）`}</dd>
+          </div>
+          <div>
+            <dt>採用</dt>
             <dd>
-              {diagnostics.lastCode === null
+              {diagnostics.picked === null
                 ? "—"
-                : `${diagnostics.lastCode}（${diagnostics.sinceLastSeenMs}ms 前）`}
+                : `${diagnostics.picked}（${diagnostics.sinceLastSeenMs}ms 前）`}
             </dd>
+          </div>
+          <div>
+            <dt>管理中</dt>
+            <dd>{`${diagnostics.tracked}件`}</dd>
           </div>
           <div>
             <dt>misses</dt>

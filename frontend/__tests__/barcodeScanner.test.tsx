@@ -5,7 +5,7 @@ import { act, render, screen } from "@testing-library/react";
 import { useState } from "react";
 
 import { BarcodeScanner } from "@/components/BarcodeScanner";
-import { resetSharedScanState } from "@/lib/scanGate";
+import { resetSharedScanStates } from "@/lib/scanGate";
 
 const mockDecodeFromConstraints = jest.fn();
 const mockReaderConstructor = jest.fn();
@@ -20,6 +20,10 @@ jest.mock("@zxing/library", () => ({ BarcodeFormat: { CODE_128: 4 }, DecodeHintT
 const trackStop = jest.fn();
 const stream = { getTracks: () => [{ stop: trackStop }] } as unknown as MediaStream;
 const getUserMedia = jest.fn();
+
+// 映像 640x480 の中心 (320,240) に近いもの／遠いもの
+const NEAR_1004 = { rawValue: "1004", boundingBox: { x: 280, y: 210, width: 80, height: 40 } };
+const FAR_1002 = { rawValue: "1002", boundingBox: { x: 10, y: 10, width: 80, height: 40 } };
 
 type DetectorMock = { detect: jest.Mock };
 let detector: DetectorMock;
@@ -39,12 +43,15 @@ const flush = async () => {
 };
 
 beforeEach(() => {
-  resetSharedScanState();
+  resetSharedScanStates();
   jest.useFakeTimers();
   jest.clearAllMocks();
   getUserMedia.mockResolvedValue(stream);
   Object.defineProperty(navigator, "mediaDevices", { value: { getUserMedia }, configurable: true });
   jest.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+  // 映像は 640x480（中心は 320,240）。1フレームに複数写ったときの採用判定に使う
+  Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { value: 640, configurable: true });
+  Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { value: 480, configurable: true });
   delete (window as { BarcodeDetector?: unknown }).BarcodeDetector;
 });
 
@@ -213,6 +220,27 @@ describe("Barcode Detection API（第一候補）", () => {
     expect(onDetect).toHaveBeenCalledTimes(1);
   });
 
+  it("test_extra_ 1フレームに2つ写っていても、中心に近い1つだけを受け付ける", async () => {
+    // 早見表のように複数のカードが並ぶ場合。並び順が入れ替わっても採用は変わらない
+    installBarcodeDetector(["code_128"]);
+    let now = 0;
+    const onDetect = jest.fn();
+    detector.detect.mockResolvedValue([FAR_1002, NEAR_1004]);
+    render(<BarcodeScanner onDetect={onDetect} now={() => now} debug={false} />);
+    await flush();
+
+    for (let i = 1; i <= 20; i += 1) {
+      now = i * 250;
+      detector.detect.mockResolvedValue(i % 2 === 0 ? [NEAR_1004, FAR_1002] : [FAR_1002, NEAR_1004]);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(250);
+      });
+    }
+
+    expect(onDetect).toHaveBeenCalledTimes(1);
+    expect(onDetect).toHaveBeenCalledWith("1004");
+  });
+
   it("test_extra_ 読み取りに失敗しても止まらない", async () => {
     installBarcodeDetector(["code_128"]);
     const onDetect = jest.fn();
@@ -257,32 +285,22 @@ describe("Barcode Detection API（第一候補）", () => {
 });
 
 describe("開発環境の状態表示（design.md 6.4）", () => {
-  it("test_extra_ debug のときは経路・読み取り回数・misses・受付回数を表示する", async () => {
+  it("test_extra_ debug のときは経路・検出数・検出コード・採用・misses・受付回数を表示する", async () => {
     installBarcodeDetector(["code_128"]);
     let now = 0;
-    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
+    detector.detect.mockResolvedValue([FAR_1002, NEAR_1004]);
     render(<BarcodeScanner onDetect={jest.fn()} now={() => now} debug />);
     await flush();
-
-    // 5フレーム（1秒ぶん）読み取り、そのうち後半3フレームは読めない
-    for (const codes of [["1001"], [], [], []]) {
-      now += 200;
-      detector.detect.mockResolvedValue(codes.map((rawValue) => ({ rawValue })));
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
-    }
-    now += 100;
+    now = 600;
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(600);
     });
 
     const panel = screen.getByLabelText("読み取りの状態（開発用）");
     expect(panel).toHaveTextContent("BarcodeDetector");
-    expect(panel).toHaveTextContent("1001");
-    expect(panel).toHaveTextContent("misses");
-    expect(panel).toHaveTextContent("3"); // 読めなかったフレーム数
-    expect(panel).toHaveTextContent("1回"); // 受け付けた回数
+    expect(panel).toHaveTextContent("1002 / 1004"); // このフレームの検出コード
+    expect(panel).toHaveTextContent("1004"); // 採用したのは中心に近い方
+    expect(panel).toHaveTextContent("1回（直近：初出）");
   });
 
   it("test_extra_ まだ何も読めていないときは「—」を表示する", async () => {
@@ -324,7 +342,7 @@ describe("開発環境の状態表示（design.md 6.4）", () => {
     });
 
     expect(info).toHaveBeenCalledWith(expect.stringContaining("[scan] 受付 1001"));
-    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("離したあとの再検出、前回の検出から 1200ms、misses=5"));
+    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("離した後の再受付、前回の検出から 1200ms、misses=5"));
   });
 
   it("test_extra_ 本番（debug なし）では表示もコンソール出力もしない", async () => {
