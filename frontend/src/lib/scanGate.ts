@@ -1,94 +1,102 @@
 // スキャンの重複防止（design.md 6.4）。カメラはかざしている間ずっと同じコードを読み続けるため、
-// そのままでは同じ商品が何件も追加される。
-// 同じコードを再び受け付けるのは「一度離した」と確実に言える場合だけとし、次の2つをともに満たすことを条件にする。
-//   - 最後にそのコードを検出してから SCAN_RELEASE_MS 以上たっている
-//   - 読み取りを試みたフレームのうち、連続 SCAN_RELEASE_FRAMES 回そのコードが検出されていない
-// 時間だけで解除すると、手ぶれなどで読み取りが一瞬途切れただけでも解除されてしまうため、フレーム数も条件に加える。
-// 別のコードはすぐ受け付ける。手入力はこの仕組みを通らない。
+// 読み取るたびに登録すると同じ商品が何件も追加される。
+//
+// 判定は次のとおり（純粋関数 nextScanState。BarcodeDetector・ZXing の両経路がこの関数を通る）。
+//   - 検出したコードが直前に受け付けたコード（lastCode）と違う → 受け付ける
+//   - 同じコードは、「離した」と判定済みのときだけ受け付ける
+//   - 「離した」＝ misses（連続未検出フレーム数）が SCAN_RELEASE_FRAMES 以上、
+//     かつ lastSeenAt からの経過が SCAN_RELEASE_MS 以上
+//   - 同じコードを検出し続けている間は、受け付けずに lastSeenAt を更新し misses を 0 に戻すだけ
+//   - 前回「受け付けた」時刻からの経過時間で再受付することはない
+// 手入力はこの仕組みを通らない。
 
 export const SCAN_RELEASE_MS = 1000;
 export const SCAN_RELEASE_FRAMES = 5;
 
-/** 直近に受け付けたコードと、最後に見えた時刻・そのあと連続して見えなかったフレーム数 */
-export type Held = { code: string; lastSeenAt: number; misses: number };
-
-/** 受け付けたときの記録。開発環境のログに使う */
-export type AcceptInfo = {
-  code: string;
-  /** 前回そのコードを検出してからの経過ミリ秒。初回は null */
-  sinceLastSeenMs: number | null;
-  /** 受け付けた時点で、連続して検出されなかったフレーム数 */
+export type ScanState = {
+  /** 直前に受け付けたコード */
+  lastCode: string | null;
+  /** lastCode を最後に検出した時刻 */
+  lastSeenAt: number;
+  /** lastCode が連続して検出されなかったフレーム数 */
   misses: number;
+  /** lastCode を「離した」と判定済みか */
+  released: boolean;
 };
 
-export type ScanGate = {
-  /** 映像1フレーム分の読み取り結果（読めなければ空）を渡し、受け付けるコードだけを返す */
-  accept: (detected: readonly string[], now: number) => string[];
-  /** 判定の状態。開発環境の表示に使う */
-  state: () => Held | null;
-  /** 直近に受け付けたときの記録。開発環境のログに使う */
-  lastAccept: () => AcceptInfo | null;
+/** 受け付けた理由。開発環境の表示とログに使う */
+export type AcceptReason = "初回" | "別のコード" | "離したあとの再検出";
+
+export type ScanDecision = {
+  state: ScanState;
+  /** このフレームで受け付けたコード */
+  accepted: string[];
+  reason: AcceptReason | null;
+  /** 同じコードを受け付けたときの、前回の検出からの経過ミリ秒 */
+  sinceLastSeenMs: number | null;
+  /** 受け付けた時点の misses */
+  missesAtAccept: number;
 };
 
-export const createScanGate = (
+export const INITIAL_SCAN_STATE: ScanState = { lastCode: null, lastSeenAt: 0, misses: 0, released: false };
+
+/**
+ * 映像1フレーム分の読み取り結果（読めなければ空）から、次の状態と受け付けるコードを決める。
+ * 副作用を持たない。時刻はすべて引数で受け取る。
+ */
+export const nextScanState = (
+  state: ScanState,
+  detected: readonly string[],
+  now: number,
   releaseMs: number = SCAN_RELEASE_MS,
   releaseFrames: number = SCAN_RELEASE_FRAMES,
-): ScanGate => {
-  let held: Held | null = null;
-  // 解除した（＝一度離したと判断した）ときの状態と、直近に受け付けたときの記録
-  let released: Held | null = null;
-  let accepted: AcceptInfo | null = null;
+): ScanDecision => {
+  let { lastCode, lastSeenAt, misses, released } = state;
+  // 報告用に、このフレームを反映する前の値を控える（同じコードを受け付けたときの経過時間と misses）
+  const before = { lastSeenAt: state.lastSeenAt, misses: state.misses };
 
-  return {
-    state: () => (held === null ? null : { ...held }),
-    lastAccept: () => (accepted === null ? null : { ...accepted }),
-
-    accept(detected, now) {
-      if (held !== null) {
-        if (detected.includes(held.code)) {
-          // まだ見えている：離れていた時間もフレーム数も数え直す
-          held = { code: held.code, lastSeenAt: now, misses: 0 };
-        } else {
-          const misses = held.misses + 1;
-          if (now - held.lastSeenAt >= releaseMs && misses >= releaseFrames) {
-            // 一度離したと判断する。解除したときの状態は、次に受け付けたときのログのために残す
-            released = { ...held, misses };
-            held = null;
-          } else {
-            held = { ...held, misses };
-          }
-        }
+  if (lastCode !== null) {
+    if (detected.includes(lastCode)) {
+      // 検出し続けている間は受け付けず、経過時間とフレーム数を数え直すだけ
+      lastSeenAt = now;
+      misses = 0;
+    } else {
+      misses += 1;
+      if (!released && misses >= releaseFrames && now - lastSeenAt >= releaseMs) {
+        released = true;
       }
+    }
+  }
 
-      const codes: string[] = [];
-      for (const code of detected) {
-        if (held?.code === code) {
-          continue;
-        }
-        const from = released !== null && released.code === code ? released : null;
-        accepted = {
-          code,
-          sinceLastSeenMs: from === null ? null : Math.round(now - from.lastSeenAt),
-          misses: from === null ? 0 : from.misses,
-        };
-        codes.push(code);
-        held = { code, lastSeenAt: now, misses: 0 };
-      }
-      return codes;
-    },
-  };
+  const accepted: string[] = [];
+  let reason: AcceptReason | null = null;
+  let sinceLastSeenMs: number | null = null;
+  let missesAtAccept = 0;
+
+  for (const code of detected) {
+    const sameCode = code === lastCode;
+    if (sameCode && !released) {
+      continue; // かざしたまま。離したと判定するまで受け付けない
+    }
+    reason = sameCode ? "離したあとの再検出" : lastCode === null ? "初回" : "別のコード";
+    sinceLastSeenMs = sameCode ? Math.round(now - before.lastSeenAt) : null;
+    missesAtAccept = sameCode ? before.misses : 0;
+    accepted.push(code);
+    lastCode = code;
+    lastSeenAt = now;
+    misses = 0;
+    released = false;
+  }
+
+  return { state: { lastCode, lastSeenAt, misses, released }, accepted, reason, sinceLastSeenMs, missesAtAccept };
 };
 
-// 画面で1つだけ持つゲート。コンポーネントが作り直されても（再マウント）状態を失わないようにする。
-// 読み取りは画面に1か所しかないため、共有して問題ない
-let shared: ScanGate | null = null;
+// 状態は画面で1つだけ持つ。再描画でも、カメラの部品が作り直されても失わない
+const sharedRef: { current: ScanState } = { current: INITIAL_SCAN_STATE };
 
-export const getSharedScanGate = (): ScanGate => {
-  shared ??= createScanGate();
-  return shared;
-};
+export const getSharedScanStateRef = (): { current: ScanState } => sharedRef;
 
 /** テスト用。ケースごとに初期状態へ戻す */
-export const resetSharedScanGate = (): void => {
-  shared = null;
+export const resetSharedScanState = (): void => {
+  sharedRef.current = INITIAL_SCAN_STATE;
 };

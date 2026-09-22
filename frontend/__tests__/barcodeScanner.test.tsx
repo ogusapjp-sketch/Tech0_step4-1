@@ -5,7 +5,7 @@ import { act, render, screen } from "@testing-library/react";
 import { useState } from "react";
 
 import { BarcodeScanner } from "@/components/BarcodeScanner";
-import { resetSharedScanGate } from "@/lib/scanGate";
+import { resetSharedScanState } from "@/lib/scanGate";
 
 const mockDecodeFromConstraints = jest.fn();
 const mockReaderConstructor = jest.fn();
@@ -39,7 +39,7 @@ const flush = async () => {
 };
 
 beforeEach(() => {
-  resetSharedScanGate();
+  resetSharedScanState();
   jest.useFakeTimers();
   jest.clearAllMocks();
   getUserMedia.mockResolvedValue(stream);
@@ -324,7 +324,7 @@ describe("開発環境の状態表示（design.md 6.4）", () => {
     });
 
     expect(info).toHaveBeenCalledWith(expect.stringContaining("[scan] 受付 1001"));
-    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("misses=5"));
+    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("離したあとの再検出、前回の検出から 1200ms、misses=5"));
   });
 
   it("test_extra_ 本番（debug なし）では表示もコンソール出力もしない", async () => {

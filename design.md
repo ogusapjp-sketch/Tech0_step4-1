@@ -901,7 +901,8 @@ type TransactionResponse = {
   経路（BarcodeDetector／ZXing）、読み取りループの実行回数と1秒あたりの回数、最後に検出したコードとそれからの経過ミリ秒、
   現在の `misses`、受け付けた回数。あわせて、受け付けるたびに前回の検出からの経過時間と `misses` をブラウザのコンソールへ出力する。
   `APP_ENV` が未設定・`production` のときは、表示も出力も行わない（設定漏れは本番扱い）
-- 実装：`frontend/src/lib/scanGate.ts`（`createScanGate`）と `BarcodeScanner`
+- 実装：`frontend/src/lib/scanGate.ts` の純粋関数 `nextScanState`（状態は `lastCode`・`lastSeenAt`・`misses`・`released`）と `BarcodeScanner`。
+  BarcodeDetector・ZXing のどちらの経路も、この関数を通る
 
 ---
 

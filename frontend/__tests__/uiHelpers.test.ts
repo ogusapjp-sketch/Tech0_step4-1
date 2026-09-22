@@ -1,7 +1,7 @@
 // 画面で使う純粋な関数。test_spec.md にケース ID がないため test_extra_
 import { purchaseFingerprint, reuseOrCreateKey } from "@/lib/idempotencyKey";
 import { CLIENT_MESSAGES, messageForError } from "@/lib/messages";
-import { SCAN_RELEASE_FRAMES, SCAN_RELEASE_MS, createScanGate } from "@/lib/scanGate";
+import { INITIAL_SCAN_STATE, SCAN_RELEASE_FRAMES, SCAN_RELEASE_MS, nextScanState, type ScanState } from "@/lib/scanGate";
 import { parseStaffCookie } from "@/lib/staff";
 import type { CartLine } from "@/lib/pricing";
 
@@ -58,101 +58,109 @@ describe("冪等キー（購入リストか会員が変わったら作り直す�
   });
 });
 
-describe("スキャンの重複防止（一度離すまで同じコードを受け付けない。design.md 6.4）", () => {
-  // 読み取りは 200ms ごと。「離した」と判断するには、1.0秒以上たち、かつ連続5フレーム検出されないことが必要
-  const frames = (gate: ReturnType<typeof createScanGate>, from: number, count: number, codes: string[] = []) => {
-    for (let i = 1; i <= count; i += 1) {
-      gate.accept(codes, from + i * 200);
+describe("スキャンの重複防止（判定の純粋関数。design.md 6.4）", () => {
+  // 1フレームぶん進める。読めたコードと時刻を渡し、受け付けた件数を数える
+  type Run = { state: ScanState; accepted: string[]; reasons: (string | null)[] };
+
+  const run = (frames: { codes: string[]; at: number }[], from: ScanState = INITIAL_SCAN_STATE): Run => {
+    let state = from;
+    const accepted: string[] = [];
+    const reasons: (string | null)[] = [];
+    for (const frame of frames) {
+      const decision = nextScanState(state, frame.codes, frame.at);
+      state = decision.state;
+      accepted.push(...decision.accepted);
+      if (decision.accepted.length > 0) {
+        reasons.push(decision.reason);
+      }
     }
-    return from + count * 200;
+    return { state, accepted, reasons };
   };
 
-  it("test_extra_ 最初の読み取りは受け付ける", () => {
-    expect(createScanGate().accept(["1001"], 1000)).toEqual(["1001"]);
+  const repeat = (codes: string[], count: number, from = 0, step = 250) =>
+    Array.from({ length: count }, (_, i) => ({ codes, at: from + i * step }));
+
+  it("test_extra_ 同じコードを 250ms 間隔で 40回（10秒）検出しても、受付は1回", () => {
+    const { accepted, reasons, state } = run(repeat(["1001"], 40));
+    expect(accepted).toEqual(["1001"]);
+    expect(reasons).toEqual(["初回"]);
+    expect(state.misses).toBe(0);
+    expect(state.released).toBe(false);
   });
 
-  it("test_extra_ かざしたままの間は、何フレーム続いても受け付けない", () => {
-    const gate = createScanGate();
-    expect(gate.accept(["1001"], 0)).toEqual(["1001"]);
-    for (let at = 200; at <= 6000; at += 200) {
-      expect(gate.accept(["1001"], at)).toEqual([]);
+  it("test_extra_ 未検出が5フレーム・1000ms 以上続いたあとに検出したら、受付は2回", () => {
+    const { accepted, reasons } = run([
+      { codes: ["1001"], at: 0 },
+      ...repeat([], SCAN_RELEASE_FRAMES, 250), // 250〜1250ms は読めない
+      { codes: ["1001"], at: 1500 },
+    ]);
+    expect(accepted).toEqual(["1001", "1001"]);
+    expect(reasons).toEqual(["初回", "離したあとの再検出"]);
+  });
+
+  it("test_extra_ 未検出が4フレームだけなら、受付は1回のまま", () => {
+    const { accepted, state } = run([
+      { codes: ["1001"], at: 0 },
+      ...repeat([], SCAN_RELEASE_FRAMES - 1, 250),
+      { codes: ["1001"], at: 1500 },
+    ]);
+    expect(accepted).toEqual(["1001"]);
+    expect(state.released).toBe(false);
+  });
+
+  it("test_extra_ 別のコードならすぐ受け付ける（A → B で2回）", () => {
+    const { accepted, reasons } = run([
+      { codes: ["1001"], at: 0 },
+      { codes: ["2001"], at: 250 },
+    ]);
+    expect(accepted).toEqual(["1001", "2001"]);
+    expect(reasons).toEqual(["初回", "別のコード"]);
+  });
+
+  it("test_extra_ 時間がたっていても、未検出フレームが5回に満たなければ受け付けない", () => {
+    const { accepted } = run([
+      { codes: ["1001"], at: 0 },
+      ...repeat([], SCAN_RELEASE_FRAMES - 1, 1000, 1000), // 4フレーム・4秒
+      { codes: ["1001"], at: 10000 },
+    ]);
+    expect(accepted).toEqual(["1001"]);
+  });
+
+  it("test_extra_ フレーム数が足りていても、1000ms たっていなければ受け付けない", () => {
+    const { accepted } = run([
+      { codes: ["1001"], at: 0 },
+      ...repeat([], 10, 50, 50), // 50ms ごとに10フレーム（500ms）
+      { codes: ["1001"], at: 600 },
+    ]);
+    expect(accepted).toEqual(["1001"]);
+  });
+
+  it("test_extra_ 途中で一度でも検出されたら、経過時間もフレーム数も数え直す", () => {
+    const { accepted } = run([
+      { codes: ["1001"], at: 0 },
+      ...repeat([], 4, 250), // 未検出4回
+      { codes: ["1001"], at: 1250 }, // 再び検出 → 数え直し
+      ...repeat([], 4, 1500), // 未検出4回
+      { codes: ["1001"], at: 2600 },
+    ]);
+    expect(accepted).toEqual(["1001"]);
+  });
+
+  it("test_extra_ 受け付けたときに、前回の検出からの経過時間と misses を返す（ログ用）", () => {
+    let state = nextScanState(INITIAL_SCAN_STATE, ["1001"], 0).state;
+    for (let i = 1; i <= SCAN_RELEASE_FRAMES; i += 1) {
+      state = nextScanState(state, [], i * 250).state;
     }
-  });
-
-  it("test_extra_ 1.0秒以上たち、かつ連続5フレーム検出されなければ受け付ける", () => {
-    const gate = createScanGate();
-    gate.accept(["1001"], 0);
-    const at = frames(gate, 0, SCAN_RELEASE_FRAMES); // 200〜1000ms の5フレームは何も読めない
-    expect(at).toBe(SCAN_RELEASE_MS);
-    expect(gate.accept(["1001"], at + 200)).toEqual(["1001"]);
-  });
-
-  it("test_extra_ 時間がたっていても、検出されなかったフレームが5回に満たなければ受け付けない", () => {
-    // 読み取りが途切れがちでも、解除されないことの確認（フレーム数の条件）
-    const gate = createScanGate();
-    gate.accept(["1001"], 0);
-    frames(gate, 0, SCAN_RELEASE_FRAMES - 1); // 空フレームは4回だけ
-    expect(gate.accept(["1001"], 100000)).toEqual([]);
-  });
-
-  it("test_extra_ フレーム数が足りていても、1.0秒たっていなければ受け付けない", () => {
-    // 読み取りが速い（フレーム間隔が短い）場合に、すぐ解除されないことの確認（時間の条件）
-    const gate = createScanGate(SCAN_RELEASE_MS, SCAN_RELEASE_FRAMES);
-    gate.accept(["1001"], 0);
-    for (let i = 1; i <= 10; i += 1) {
-      gate.accept([], i * 50); // 50ms ごとに10フレーム（合計 500ms）
-    }
-    expect(gate.accept(["1001"], 550)).toEqual([]);
-  });
-
-  it("test_extra_ 途中で一度でも検出されたら、時間もフレーム数も数え直す", () => {
-    const gate = createScanGate();
-    gate.accept(["1001"], 0);
-    frames(gate, 0, 4); // 空フレーム4回（800ms）
-    gate.accept(["1001"], 1000); // 手ぶれなどで再び見えた → 数え直し
-    frames(gate, 1000, 4); // 空フレーム4回（1800ms まで）
-    expect(gate.accept(["1001"], 2000)).toEqual([]); // 5回目に満たないので受け付けない
-    frames(gate, 2000, SCAN_RELEASE_FRAMES);
-    expect(gate.accept(["1001"], 3200)).toEqual(["1001"]);
-  });
-
-  it("test_extra_ 別のコードはすぐ受け付ける（連続スキャン）", () => {
-    const gate = createScanGate();
-    expect(gate.accept(["1001"], 0)).toEqual(["1001"]);
-    expect(gate.accept(["2001"], 200)).toEqual(["2001"]);
-  });
-
-  it("test_extra_ 別のコードを受け付けた直後は、そちらがかざしたまま扱いになる", () => {
-    const gate = createScanGate();
-    gate.accept(["1001"], 0);
-    gate.accept(["2001"], 200);
-    expect(gate.accept(["2001"], 400)).toEqual([]);
-  });
-
-  it("test_extra_ 判定の状態を取り出せる（開発環境の表示用）", () => {
-    const gate = createScanGate();
-    expect(gate.state()).toBeNull();
-    expect(gate.lastAccept()).toBeNull();
-
-    gate.accept(["1001"], 0);
-    expect(gate.state()).toEqual({ code: "1001", lastSeenAt: 0, misses: 0 });
-    expect(gate.lastAccept()).toEqual({ code: "1001", sinceLastSeenMs: null, misses: 0 });
-
-    gate.accept([], 200);
-    gate.accept([], 400);
-    expect(gate.state()).toEqual({ code: "1001", lastSeenAt: 0, misses: 2 });
-  });
-
-  it("test_extra_ 受け付けたときに、前回の検出からの経過時間と misses を記録する（ログ用）", () => {
-    const gate = createScanGate();
-    gate.accept(["1001"], 0);
-    frames(gate, 0, SCAN_RELEASE_FRAMES); // 200〜1000ms は読めない
-    gate.accept(["1001"], 1200);
-    expect(gate.lastAccept()).toEqual({ code: "1001", sinceLastSeenMs: 1200, misses: SCAN_RELEASE_FRAMES });
+    const decision = nextScanState(state, ["1001"], 1500);
+    expect(decision.accepted).toEqual(["1001"]);
+    expect(decision.sinceLastSeenMs).toBe(1500);
+    expect(decision.missesAtAccept).toBe(SCAN_RELEASE_FRAMES);
   });
 
   it("test_extra_ 何も読めないフレームだけでは何も受け付けない", () => {
-    expect(createScanGate().accept([], 1000)).toEqual([]);
+    const { accepted, state } = run(repeat([], 20));
+    expect(accepted).toEqual([]);
+    expect(state.lastCode).toBeNull();
   });
 });
 
