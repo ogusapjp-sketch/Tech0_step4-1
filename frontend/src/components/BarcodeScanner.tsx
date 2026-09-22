@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { CLIENT_MESSAGES } from "@/lib/messages";
-import { acceptScan, type LastScan } from "@/lib/scanCooldown";
+import { createScanGate } from "@/lib/scanGate";
 
 import styles from "./BarcodeScanner.module.css";
 
@@ -21,6 +21,9 @@ type Props = {
   now?: () => number;
 };
 
+// 映像1フレーム分の読み取り結果（何も読めなければ空）
+type OnFrame = (codes: string[]) => void;
+
 const supportsNativeCode128 = async (): Promise<boolean> => {
   const Detector = window.BarcodeDetector;
   if (!Detector) {
@@ -29,7 +32,7 @@ const supportsNativeCode128 = async (): Promise<boolean> => {
   return (await Detector.getSupportedFormats()).includes("code_128");
 };
 
-const startNativeScanner = async (video: HTMLVideoElement, handle: (code: string) => void): Promise<StopScanner> => {
+const startNativeScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Promise<StopScanner> => {
   const stream = await navigator.mediaDevices.getUserMedia(VIDEO_CONSTRAINTS);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -46,11 +49,9 @@ const startNativeScanner = async (video: HTMLVideoElement, handle: (code: string
 
   const tick = async () => {
     try {
-      for (const barcode of await detector.detect(video)) {
-        handle(barcode.rawValue);
-      }
+      onFrame((await detector.detect(video)).map((barcode) => barcode.rawValue));
     } catch {
-      // 映像の準備前などは次の周期で読み直す
+      // 映像の準備前などは次の周期で読み直す。読めなかったことは「離した」と扱わない
     }
     if (!stopped) {
       timer = setTimeout(tick, SCAN_INTERVAL_MS);
@@ -60,7 +61,7 @@ const startNativeScanner = async (video: HTMLVideoElement, handle: (code: string
   return stop;
 };
 
-const startZxingScanner = async (video: HTMLVideoElement, handle: (code: string) => void): Promise<StopScanner> => {
+const startZxingScanner = async (video: HTMLVideoElement, onFrame: OnFrame): Promise<StopScanner> => {
   const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] = await Promise.all([
     import("@zxing/browser"),
     import("@zxing/library"),
@@ -68,9 +69,8 @@ const startZxingScanner = async (video: HTMLVideoElement, handle: (code: string)
   const hints = new Map([[DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]]]);
   const reader = new BrowserMultiFormatReader(hints);
   const controls = await reader.decodeFromConstraints(VIDEO_CONSTRAINTS, video, (result) => {
-    if (result) {
-      handle(result.getText());
-    }
+    // 読めなかったときも空で渡す。これで「離した」ことが分かる
+    onFrame(result ? [result.getText()] : []);
   });
   return () => controls.stop();
 };
@@ -90,19 +90,17 @@ export function BarcodeScanner({ onDetect, now = () => performance.now() }: Prop
     const video = videoRef.current as HTMLVideoElement;
     let cancelled = false;
     let stopScanner: StopScanner | null = null;
-    let lastScan: LastScan | null = null;
+    const gate = createScanGate();
 
-    const handle = (code: string) => {
+    const handleFrame = (codes: string[]) => {
       const at = nowRef.current();
-      if (!acceptScan(lastScan, code, at)) {
-        return;
+      for (const code of gate.accept(codes, at)) {
+        onDetectRef.current(code);
       }
-      lastScan = { code, at };
-      onDetectRef.current(code);
     };
 
     const start = async () =>
-      (await supportsNativeCode128()) ? startNativeScanner(video, handle) : startZxingScanner(video, handle);
+      (await supportsNativeCode128()) ? startNativeScanner(video, handleFrame) : startZxingScanner(video, handleFrame);
 
     start().then(
       (stop) => {
