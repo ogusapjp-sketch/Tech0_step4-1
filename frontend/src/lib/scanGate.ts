@@ -7,16 +7,22 @@
 // 写っているコードは採用の有無に関係なく「見えている」として扱い、未検出のフレーム数は増やさない。
 //
 // 受付の条件（採用したコードについて）
+//   - 連続して採用されたフレーム数（stableFrames）が STABLE_FRAMES 以上であること。そのうえで
 //   - まだ受け付けたことがないコード → 受け付ける
 //   - 受け付けたことがあるコード → 「離した」と判定済みのときだけ受け付ける
-//   - 「離した」＝ misses（連続未検出フレーム数）が SCAN_RELEASE_FRAMES 以上、
-//     かつ lastSeenAt からの経過が SCAN_RELEASE_MS 以上
+//   - 「離した」＝ misses（連続未検出フレーム数）が RELEASE_MISSES 以上、
+//     かつ lastSeenAt からの経過が RELEASE_MS 以上
 // 手入力はこの仕組みを通らない。
 
-export const SCAN_RELEASE_MS = 1000;
-export const SCAN_RELEASE_FRAMES = 5;
-// これだけ連続で検出されなければ、状態を捨てる（早見表を持ち替えたあとの再スキャンに備える）
-export const SCAN_FORGET_FRAMES = 30;
+// 受付の判定に使う定数（design.md 6.4）
+/** 受け付けるまでに、連続して採用（中心に最も近い）である必要があるフレーム数 */
+export const STABLE_FRAMES = 3;
+/** 「離した」と判定するのに必要な、連続未検出フレーム数 */
+export const RELEASE_MISSES = 12;
+/** 「離した」と判定するのに必要な、最後の検出からの経過ミリ秒 */
+export const RELEASE_MS = 3000;
+/** これだけ連続で検出されなければ、状態を捨てる（早見表を持ち替えたあとの再スキャンに備える） */
+export const FORGET_MISSES = 30;
 
 /** 読み取ったバーコード1件。boundingBox は Barcode Detection API の値 */
 export type ScannedBarcode = {
@@ -34,6 +40,12 @@ export type CodeState = {
   released: boolean;
   /** これまでに受け付けたことがあるか */
   everAccepted: boolean;
+  /** 連続して採用（中心に最も近い）だったフレーム数 */
+  stableFrames: number;
+  /** 「離した」と判定したときに、離れていた時間（ミリ秒）。診断用 */
+  awayMs?: number;
+  /** 「離した」と判定したときの、連続未検出フレーム数。診断用 */
+  awayMisses?: number;
 };
 export type ScanStates = ReadonlyMap<string, CodeState>;
 
@@ -44,10 +56,12 @@ export type ScanDecision = {
   /** このフレームで受け付けたコード。なければ null */
   accepted: string | null;
   reason: AcceptReason | null;
-  /** 同じコードを受け付けたときの、前回の検出からの経過ミリ秒 */
-  sinceLastSeenMs: number | null;
-  /** 受け付けた時点の misses */
-  missesAtAccept: number;
+  /** 再受付のとき、そのコードが見えなくなっていた時間（ミリ秒）。初出は null */
+  awayMs: number | null;
+  /** 再受付のとき、そのコードが連続して検出されなかったフレーム数 */
+  awayMisses: number;
+  /** 受け付けた時点の、連続して採用されたフレーム数 */
+  stableFramesAtAccept: number;
 };
 
 /**
@@ -95,55 +109,71 @@ export const nextScanState = (
   detected: readonly string[],
   picked: string | null,
   now: number,
-  releaseMs: number = SCAN_RELEASE_MS,
-  releaseFrames: number = SCAN_RELEASE_FRAMES,
-  forgetFrames: number = SCAN_FORGET_FRAMES,
+  stableFrames: number = STABLE_FRAMES,
+  releaseMisses: number = RELEASE_MISSES,
+  releaseMs: number = RELEASE_MS,
+  forgetMisses: number = FORGET_MISSES,
 ): ScanDecision => {
   const next = new Map<string, CodeState>();
   let accepted: string | null = null;
   let reason: AcceptReason | null = null;
-  let sinceLastSeenMs: number | null = null;
-  let missesAtAccept = 0;
+  let awayMs: number | null = null;
+  let awayMisses = 0;
+  let stableFramesAtAccept = 0;
 
-  // 検出されなかった既知のコード：未検出のフレーム数を増やす
+  // 検出されなかった既知のコード：未検出のフレーム数を増やす。採用が途切れたので安定も 0 に戻す
   for (const [code, state] of states) {
     if (detected.includes(code)) {
       continue; // 検出されたものは下でまとめて更新する
     }
     const misses = state.misses + 1;
-    if (misses >= forgetFrames) {
+    if (misses >= forgetMisses) {
       continue; // 十分に見えなくなったら忘れる
     }
-    const released = state.released || (misses >= releaseFrames && now - state.lastSeenAt >= releaseMs);
-    next.set(code, { ...state, misses, released });
+    const away = now - state.lastSeenAt;
+    const release = !state.released && misses >= releaseMisses && away >= releaseMs;
+    next.set(code, {
+      ...state,
+      misses,
+      released: state.released || release,
+      stableFrames: 0,
+      // 解除した時点の「離れていた時間・フレーム数」を残す（診断用）
+      awayMs: release ? Math.round(away) : state.awayMs,
+      awayMisses: release ? misses : state.awayMisses,
+    });
   }
 
   // 検出されたコード：採用の有無に関係なく、最後に見えた時刻を更新して misses を 0 に戻す。
-  // 「離した」かどうか（released）と「受け付けたことがあるか」（everAccepted）は引き継ぐ
+  // 採用されたコードだけ安定フレーム数を1増やし、それ以外は 0 に戻す
   for (const code of detected) {
     const state = states.get(code);
     next.set(code, {
+      ...state, // 「離した」の記録（awayMs・awayMisses）や everAccepted を引き継ぐ
       lastSeenAt: now,
       misses: 0,
       released: state?.released ?? false,
       everAccepted: state?.everAccepted ?? false,
+      stableFrames: code === picked ? (state?.stableFrames ?? 0) + 1 : 0,
     });
   }
 
-  // 受付の判定は、採用した1件についてだけ行う
+  // 受付の判定は、採用した1件についてだけ行う。中心判定の一瞬の揺れで隣のコードを拾わないよう、
+  // 連続して採用されたフレーム数が STABLE_FRAMES 以上であることを条件に加える
   if (picked !== null) {
     const state = states.get(picked);
+    const current = next.get(picked) as CodeState;
     const firstTime = state === undefined || !state.everAccepted;
-    if (firstTime || state.released) {
+    if (current.stableFrames >= stableFrames && (firstTime || state.released)) {
       accepted = picked;
       reason = firstTime ? "初出" : "離した後の再受付";
-      sinceLastSeenMs = state === undefined ? null : Math.round(now - state.lastSeenAt);
-      missesAtAccept = state?.misses ?? 0;
-      next.set(picked, { lastSeenAt: now, misses: 0, released: false, everAccepted: true });
+      awayMs = firstTime ? null : (state?.awayMs ?? null);
+      awayMisses = firstTime ? 0 : (state?.awayMisses ?? 0);
+      stableFramesAtAccept = current.stableFrames;
+      next.set(picked, { ...current, released: false, everAccepted: true });
     }
   }
 
-  return { states: next, accepted, reason, sinceLastSeenMs, missesAtAccept };
+  return { states: next, accepted, reason, awayMs, awayMisses, stableFramesAtAccept };
 };
 
 // 状態は画面で1つだけ持つ。再描画でも、カメラの部品が作り直されても失わない

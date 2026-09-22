@@ -36,6 +36,13 @@ const installBarcodeDetector = (formats: string[]) => {
   return ctor;
 };
 
+// 読み取りを1フレーム進める（読み取りの周期は 200ms）
+const tick = async (ms = 200) => {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+};
+
 const flush = async () => {
   await act(async () => {
     for (let i = 0; i < 50; i += 1) await Promise.resolve();
@@ -65,8 +72,10 @@ describe("Barcode Detection API（第一候補）", () => {
     const ctor = installBarcodeDetector(["code_128", "qr_code"]);
     const onDetect = jest.fn();
     render(<BarcodeScanner onDetect={onDetect} now={() => 0} />);
-    detector.detect.mockResolvedValueOnce([{ rawValue: "1001" }]);
+    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     await flush();
+    await tick();
+    await tick(); // 連続3フレーム中心にあると受け付ける（STABLE_FRAMES）
 
     expect(getUserMedia).toHaveBeenCalledWith({ video: { facingMode: "environment" }, audio: false });
     expect(ctor).toHaveBeenCalledWith({ formats: ["code_128"] });
@@ -82,66 +91,72 @@ describe("Barcode Detection API（第一候補）", () => {
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
     await flush();
-    expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // かざしたまま：映り続けている間は何周期たっても受け付けない（読み取りは 200ms ごと）
-    for (const at of [200, 400, 600, 800, 1000, 1200]) {
-      now = at;
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
+    // かざしたまま：3フレーム目で1回受け付け、そのあとは何周期たっても受け付けない
+    for (let i = 1; i <= 30; i += 1) {
+      now = i * 200;
+      await tick();
     }
     expect(onDetect).toHaveBeenCalledTimes(1);
   });
 
-  it("test_extra_ 1.0秒以上・連続5フレーム読めなくなったら、同じコードをもう一度読み取れる", async () => {
+  it("test_extra_ 3000ms 以上・連続12フレーム読めなくなったら、同じコードをもう一度読み取れる", async () => {
     installBarcodeDetector(["code_128"]);
     let now = 0;
     const onDetect = jest.fn();
     const frame = async (codes: string[]) => {
-      now += 200;
+      now += 250;
       detector.detect.mockResolvedValue(codes.map((rawValue) => ({ rawValue })));
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
+      await tick(250);
     };
 
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
     await flush();
+    await frame(["1001"]);
+    await frame(["1001"]); // 3フレーム続いたので受け付ける
     expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // 読み取りが4フレーム途切れただけでは解除しない（手ぶれで一瞬外れた場合）
-    for (let i = 0; i < 4; i += 1) {
+    // 読み取りが11フレームだけ途切れても解除しない
+    for (let i = 0; i < 11; i += 1) {
       await frame([]);
     }
     await frame(["1001"]);
+    await frame(["1001"]);
+    await frame(["1001"]);
     expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // 5フレーム連続で読めず、最後の検出から 1.0秒以上たったら受け付ける
-    for (let i = 0; i < 5; i += 1) {
+    // 12フレーム連続で読めず、最後の検出から 3000ms 以上たったら受け付ける
+    for (let i = 0; i < 12; i += 1) {
       await frame([]);
     }
+    await frame(["1001"]);
+    await frame(["1001"]);
     await frame(["1001"]);
     expect(onDetect).toHaveBeenCalledTimes(2);
     expect(onDetect).toHaveBeenNthCalledWith(2, "1001");
   });
 
-  it("test_extra_ 別のコードは、前のコードをかざしたままでもすぐ受け付ける", async () => {
+  it("test_extra_ 中心が別のコードに3フレーム続いたら、そのコードを受け付ける", async () => {
     installBarcodeDetector(["code_128"]);
     let now = 0;
     const onDetect = jest.fn();
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
     await flush();
+    now = 200;
+    await tick();
+    now = 400;
+    await tick();
 
     detector.detect.mockResolvedValue([{ rawValue: "2001" }]);
-    now = 200;
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(200);
-    });
+    for (let i = 1; i <= 3; i += 1) {
+      now = 400 + i * 200;
+      await tick();
+    }
     expect(onDetect).toHaveBeenNthCalledWith(1, "1001");
     expect(onDetect).toHaveBeenNthCalledWith(2, "2001");
+    expect(onDetect).toHaveBeenCalledTimes(2);
   });
 
   it("test_extra_ 追加による再描画をはさんでも、かざしたままなら追加されない", async () => {
@@ -169,14 +184,11 @@ describe("Barcode Detection API（第一候補）", () => {
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     render(<Harness />);
     await flush();
-    expect(screen.getByText("行数:1")).toBeInTheDocument();
 
-    // かざしたまま 30フレーム（6秒ぶん）。再描画が起きても追加されない
+    // かざしたまま 30フレーム（6秒ぶん）。3フレーム目で1回追加され、そのあとは再描画が起きても増えない
     for (let i = 0; i < 30; i += 1) {
       now += 200;
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
+      await tick();
     }
     expect(detected).toEqual(["1001"]);
     expect(screen.getByText("行数:1")).toBeInTheDocument();
@@ -190,17 +202,19 @@ describe("Barcode Detection API（第一候補）", () => {
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     const { unmount } = render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
     await flush();
+    now = 200;
+    await tick();
+    now = 400;
+    await tick();
     expect(onDetect).toHaveBeenCalledTimes(1);
 
     unmount();
-    now = 400;
+    now = 600;
     render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
     await flush();
     for (let i = 0; i < 10; i += 1) {
       now += 200;
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
+      await tick();
     }
     expect(onDetect).toHaveBeenCalledTimes(1);
   });
@@ -211,6 +225,8 @@ describe("Barcode Detection API（第一候補）", () => {
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     const { unmount } = render(<BarcodeScanner onDetect={onDetect} now={() => 0} />);
     await flush();
+    await tick();
+    await tick();
     expect(onDetect).toHaveBeenCalledTimes(1);
 
     unmount();
@@ -244,12 +260,12 @@ describe("Barcode Detection API（第一候補）", () => {
   it("test_extra_ 読み取りに失敗しても止まらない", async () => {
     installBarcodeDetector(["code_128"]);
     const onDetect = jest.fn();
-    detector.detect.mockRejectedValueOnce(new Error("frame not ready")).mockResolvedValueOnce([{ rawValue: "2001" }]);
+    detector.detect.mockRejectedValueOnce(new Error("frame not ready")).mockResolvedValue([{ rawValue: "2001" }]);
     render(<BarcodeScanner onDetect={onDetect} now={() => 0} />);
     await flush();
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(200);
-    });
+    for (let i = 0; i < 3; i += 1) {
+      await tick();
+    }
     expect(onDetect).toHaveBeenCalledWith("2001");
   });
 
@@ -323,26 +339,30 @@ describe("開発環境の状態表示（design.md 6.4）", () => {
     installBarcodeDetector(["code_128"]);
     const info = jest.spyOn(console, "info").mockImplementation(() => {});
     let now = 0;
+    // 読み取りの周期に合わせて 200ms ずつ進める
+    const frame = async (codes: string[]) => {
+      now += 200;
+      detector.detect.mockResolvedValue(codes.map((rawValue) => ({ rawValue })));
+      await tick();
+    };
+
     detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
     render(<BarcodeScanner onDetect={jest.fn()} now={() => now} debug />);
     await flush();
+    await frame(["1001"]);
+    await frame(["1001"]);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("[scan] 受付 1001（初出、離れていた時間 —"));
 
-    // 5フレーム読めない状態が続いてから、もう一度検出する
-    for (let i = 0; i < 5; i += 1) {
-      now += 200;
-      detector.detect.mockResolvedValue([]);
-      await act(async () => {
-        await jest.advanceTimersByTimeAsync(200);
-      });
+    // 読めない状態が 3000ms（200ms × 15フレーム）続いてから、もう一度3フレーム検出する
+    for (let i = 0; i < 15; i += 1) {
+      await frame([]);
     }
-    now += 200;
-    detector.detect.mockResolvedValue([{ rawValue: "1001" }]);
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(200);
-    });
-
-    expect(info).toHaveBeenCalledWith(expect.stringContaining("[scan] 受付 1001"));
-    expect(info).toHaveBeenLastCalledWith(expect.stringContaining("離した後の再受付、前回の検出から 1200ms、misses=5"));
+    await frame(["1001"]);
+    await frame(["1001"]);
+    await frame(["1001"]);
+    expect(info).toHaveBeenLastCalledWith(
+      expect.stringContaining("離した後の再受付、離れていた時間 3000ms、misses=15、安定=3フレーム"),
+    );
   });
 
   it("test_extra_ 本番（debug なし）では表示もコンソール出力もしない", async () => {
@@ -383,8 +403,9 @@ describe("ZXing（非対応ブラウザでの代替）", () => {
 
     act(() => {
       callback(undefined, undefined, controls); // 読めないフレームも 1 フレームとして渡す
-      callback({ getText: () => "M000001" }, undefined, controls);
-      callback({ getText: () => "M000001" }, undefined, controls); // かざしたまま
+      for (let i = 0; i < 5; i += 1) {
+        callback({ getText: () => "M000001" }, undefined, controls); // 3フレーム目で受け付け、以後はかざしたまま
+      }
     });
     expect(onDetect).toHaveBeenCalledTimes(1);
     expect(onDetect).toHaveBeenCalledWith("M000001");
@@ -404,18 +425,23 @@ describe("ZXing（非対応ブラウザでの代替）", () => {
     const result = { getText: () => "1001" };
 
     act(() => {
-      callback(result, undefined, controls);
+      for (let i = 1; i <= 3; i += 1) {
+        now = i * 250;
+        callback(result, undefined, controls);
+      }
     });
     expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // 読めないフレームが5回、最後の検出から 1.0秒以上
+    // 読めないフレームが12回、最後の検出から 3000ms 以上
     act(() => {
-      for (let i = 1; i <= 5; i += 1) {
-        now = i * 200;
+      for (let i = 1; i <= 12; i += 1) {
+        now = 750 + i * 250;
         callback(undefined, undefined, controls);
       }
-      now = 1200;
-      callback(result, undefined, controls);
+      for (let i = 1; i <= 3; i += 1) {
+        now = 3750 + i * 250;
+        callback(result, undefined, controls);
+      }
     });
     expect(onDetect).toHaveBeenCalledTimes(2);
   });

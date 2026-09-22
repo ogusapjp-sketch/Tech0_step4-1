@@ -43,6 +43,7 @@ type Diagnostics = {
   sinceLastSeenMs: number | null;
   misses: number;
   released: boolean;
+  stableFrames: number; // 採用中のコードが連続して採用されたフレーム数
   tracked: number; // 状態を持っているコード数
   lastReason: AcceptReason | null;
 };
@@ -174,6 +175,7 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
         sinceLastSeenMs: state === undefined ? null : Math.round(at - state.lastSeenAt),
         misses: state?.misses ?? 0,
         released: state?.released ?? false,
+        stableFrames: state?.stableFrames ?? 0,
         tracked: scanStates.current.size,
         lastReason: lastReasonRef.current,
       });
@@ -208,12 +210,11 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
       countsRef.current.accepted += 1;
       lastReasonRef.current = decision.reason;
       if (debugRef.current) {
-        const elapsed = decision.sinceLastSeenMs;
         // eslint-disable-next-line no-console
         console.info(
-          `[scan] 受付 ${decision.accepted}（${decision.reason}、前回の検出から ${
-            elapsed === null ? "—" : `${elapsed}ms`
-          }、misses=${decision.missesAtAccept}）`,
+          `[scan] 受付 ${decision.accepted}（${decision.reason}、離れていた時間 ${
+            decision.awayMs === null ? "—" : `${decision.awayMs}ms`
+          }、misses=${decision.awayMisses}、安定=${decision.stableFramesAtAccept}フレーム）`,
         );
       }
       onDetectRef.current(decision.accepted);
@@ -280,6 +281,10 @@ export function BarcodeScanner({ onDetect, now = () => performance.now(), debug 
                 ? "—"
                 : `${diagnostics.picked}（${diagnostics.sinceLastSeenMs}ms 前）`}
             </dd>
+          </div>
+          <div>
+            <dt>安定</dt>
+            <dd>{`${diagnostics.stableFrames}フレーム`}</dd>
           </div>
           <div>
             <dt>管理中</dt>

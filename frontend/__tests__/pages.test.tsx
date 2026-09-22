@@ -9,8 +9,8 @@ import RegisterPage from "@/app/page";
 const mockCookieGet = jest.fn();
 jest.mock("next/headers", () => ({ cookies: async () => ({ get: mockCookieGet }) }));
 jest.mock("@/components/RegisterScreen", () => ({
-  RegisterScreen: ({ staff }: { staff: unknown }) =>
-    require("react").createElement("p", null, `register:${JSON.stringify(staff)}`),
+  RegisterScreen: ({ staff, debug }: { staff: unknown; debug: boolean }) =>
+    require("react").createElement("p", null, `register:${JSON.stringify(staff)}:debug=${debug}`),
 }));
 jest.mock("@/components/LoginForm", () => ({
   LoginForm: () => require("react").createElement("p", null, "login-form"),
@@ -21,13 +21,30 @@ describe("ページ", () => {
     mockCookieGet.mockReturnValue({ value: JSON.stringify({ staff_id: "S001", name: "店主" }) });
     render(await RegisterPage());
     expect(mockCookieGet).toHaveBeenCalledWith("pos_staff");
-    expect(screen.getByText('register:{"staff_id":"S001","name":"店主"}')).toBeInTheDocument();
+    expect(screen.getByText('register:{"staff_id":"S001","name":"店主"}:debug=false')).toBeInTheDocument();
   });
 
   it("test_extra_ 表示用 Cookie がなければ担当者は null", async () => {
     mockCookieGet.mockReturnValue(undefined);
     render(await RegisterPage());
-    expect(screen.getByText("register:null")).toBeInTheDocument();
+    expect(screen.getByText("register:null:debug=false")).toBeInTheDocument();
+  });
+
+  it.each([
+    { label: "development なら表示する", appEnv: "development", debug: true },
+    { label: "production なら表示しない", appEnv: "production", debug: false },
+    { label: "未設定なら表示しない（本番扱い）", appEnv: undefined, debug: false },
+  ])("test_extra_ スキャンの診断表示は $label", async ({ appEnv, debug }) => {
+    const original = process.env.APP_ENV;
+    if (appEnv === undefined) {
+      delete process.env.APP_ENV;
+    } else {
+      process.env.APP_ENV = appEnv;
+    }
+    mockCookieGet.mockReturnValue(undefined);
+    render(await RegisterPage());
+    expect(screen.getByText(`register:null:debug=${debug}`)).toBeInTheDocument();
+    process.env.APP_ENV = original;
   });
 
   it("test_extra_ ログイン画面は LoginForm を表示する", () => {
