@@ -13,6 +13,8 @@ import pymysql
 import pymysql.cursors
 from pymysql.constants import CLIENT
 
+from app.core.config import resolve_db_ssl_ca
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SEED_SQL = Path(__file__).resolve().parents[1] / "fixtures" / "seed.sql"
 
@@ -37,18 +39,39 @@ UT_B_19_ITEMS = [
 UT_B_19_TOTALS = (2915, 145, 277, 3047)
 
 
+# 読み込む設定ファイル。Azure の共有 MySQL に対して実行するときは IT_ENV_FILE=.env.azure を指定する
+ENV_FILE = Path(os.environ.get("IT_ENV_FILE", REPO_ROOT / ".env"))
+OVERRIDABLE_KEYS = (
+    "APP_DB_USER",
+    "APP_DB_PASSWORD",
+    "MYSQL_DATABASE",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_SSL_CA",
+)
+
+
+def _unquote(value: str) -> str:
+    """.env.azure は値を単引用符で囲む書き方のため、囲みを外す。"""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
 def load_env() -> dict[str, str]:
-    """リポジトリ直下の .env を読み、同名の環境変数があればそちらを優先する。"""
+    """設定ファイル（既定は .env）を読み、同名の環境変数があればそちらを優先する。"""
     values: dict[str, str] = {}
-    env_file = REPO_ROOT / ".env"
-    if env_file.exists():
-        for raw in env_file.read_text(encoding="utf-8").splitlines():
+    if ENV_FILE.exists():
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
-    for key in ("APP_DB_USER", "APP_DB_PASSWORD", "MYSQL_DATABASE"):
+            values[key.strip()] = _unquote(value.strip())
+    for key in OVERRIDABLE_KEYS:
         if key in os.environ:
             values[key] = os.environ[key]
     return values
@@ -57,17 +80,36 @@ def load_env() -> dict[str, str]:
 ENV = load_env()
 
 
+def db_params() -> dict:
+    """DB への接続情報。DB_HOST があれば Azure（SSL 必須）、なければローカルの Docker。"""
+    if ENV.get("DB_HOST"):
+        ssl_ca = resolve_db_ssl_ca(ENV.get("DB_SSL_CA"))
+        return {
+            "host": ENV["DB_HOST"],
+            "port": int(ENV.get("DB_PORT") or 3306),
+            "user": ENV["DB_USER"],
+            "password": ENV["DB_PASSWORD"],
+            "database": ENV["DB_NAME"],
+            **({"ssl": {"ca": ssl_ca}} if ssl_ca else {}),
+        }
+    return {
+        "host": os.environ.get("IT_DB_HOST", "127.0.0.1"),
+        "port": int(os.environ.get("IT_DB_PORT", "3306")),
+        "user": ENV.get("APP_DB_USER", "pos_app"),
+        "password": ENV["APP_DB_PASSWORD"],
+        "database": ENV.get("MYSQL_DATABASE", "pos"),
+    }
+
+
 def connect_db(multi_statements: bool = False) -> pymysql.connections.Connection:
     return pymysql.connect(
-        host=os.environ.get("IT_DB_HOST", "127.0.0.1"),
-        port=int(os.environ.get("IT_DB_PORT", "3306")),
-        user=ENV.get("APP_DB_USER", "pos_app"),
-        password=ENV["APP_DB_PASSWORD"],
-        database=ENV.get("MYSQL_DATABASE", "pos"),
+        **db_params(),
         charset="utf8mb4",
         autocommit=True,
         cursorclass=pymysql.cursors.DictCursor,
         client_flag=CLIENT.MULTI_STATEMENTS if multi_statements else 0,
+        # サーバの time_zone が +00:00 でも、セッションは日本時間に揃える（アプリと同じ）
+        init_command="SET SESSION time_zone = '+09:00'",
     )
 
 

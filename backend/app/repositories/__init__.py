@@ -17,8 +17,10 @@ from app.services.repositories import Repositories
 
 def create_sql_repositories_provider(
     database_url: str,
+    *,
+    ssl_ca: str | None = None,
 ) -> Callable[[], AbstractContextManager[Repositories]]:
-    session_factory = create_session_factory(database_url)
+    session_factory = create_session_factory(database_url, ssl_ca=ssl_ca)
 
     @contextmanager
     def provide() -> Iterator[Repositories]:

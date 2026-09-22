@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+!.env.azure.example
+!.env.azure.admin.example
 
 # Python
 .venv/

@@ -1,0 +1,30 @@
+# Azure の共有 MySQL（gen12-mysql-pos）に接続して backend / frontend を動かす（docs/azure_notes.md）
+# 使い方：
+#   docker compose down                                   # ローカルの一式を止める（ポートが重なるため）
+#   docker compose -f docker-compose.azure.yml up -d --build
+# 接続設定は .env.azure を env_file でそのまま渡す。compose の変数展開を通さないため、
+# パスワードに $ や # が含まれていても壊れない
+name: pos-azure
+
+services:
+  backend:
+    build: ./backend
+    env_file:
+      - .env.azure
+    environment:
+      TZ: Asia/Tokyo
+    ports:
+      # 結合テストと動作確認のため、ホストの 127.0.0.1 にだけ公開する
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build: ./frontend
+    environment:
+      TZ: Asia/Tokyo
+      # ローカルの http で動かすため development（Cookie の Secure を付けない）
+      APP_ENV: ${APP_ENV:-development}
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:3000:3000"

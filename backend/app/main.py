@@ -39,7 +39,7 @@ def create_app(
     app.state.business_clock = business_clock or get_business_clock()
     app.state.token_clock = token_clock or get_token_clock()
     app.state.repositories_provider = repositories_provider or create_sql_repositories_provider(
-        app_settings.database_url
+        app_settings.database_url, ssl_ca=app_settings.db_ssl_ca
     )
 
     # 許可オリジンを Next.js の内部アドレスに限定する（多層防御、design.md 7.2）
