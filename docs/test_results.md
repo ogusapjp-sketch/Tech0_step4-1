@@ -22,6 +22,24 @@ test_spec.md の結果欄には記入せず、実施結果を本書に記録す�
 | 結合テストの自動分（IT-01〜20、29〜37 の28件。`run_all.sh` の全4回） | 合格 |
 | 手動分（IT-21〜28 の8件） | 8.4 では再実施していない（2026-09-14 の 8.0 での結果を維持） |
 
+### Azure の共有 MySQL に対する結合テスト（2026-09-22）
+
+Azure Database for MySQL Flexible Server（`gen12-mysql-pos.mysql.database.azure.com`、MySQL 8.4、自分専用のデータベース `pos_oguchan`）に
+ローカルの FastAPI・Next.js（Docker）から接続し、結合テストの自動分の1回目を実行した。手順と設定は `docs/azure_notes.md`。
+
+| 項目 | 内容 |
+|---|---|
+| 対象 | IT-01〜04、06〜20、29〜32、35〜37（26件） |
+| 結果 | **26件すべて合格**。ローカルの Docker（MySQL 8.4.11）と同じ結果 |
+| 実施日 | 2026-09-22 |
+| 環境 | サーバ `8.4.9-azure`、SSL 必須（TLSv1.3、証明書とホスト名を検証）。アプリ用ユーザー `pos_app_oguchan`（DML のみ）。`APP_ENV=development`、`TEST_FIXED_NOW=2026-09-05T12:00:00` |
+| 実行方法 | `docker compose -f docker-compose.azure.yml up -d` のうえ、`cd backend && IT_ENV_FILE=../.env.azure .venv/bin/pytest tests/integration -m "not ttl5 and not realtime and not dbpause"` |
+| 未実施 | IT-05（`ACCESS_TOKEN_TTL_SECONDS=5`）、IT-33（`TEST_FIXED_NOW` 未設定）、IT-34（`docker pause mysql`）、手動分 IT-21〜28。IT-34 は共有サーバを止められないため Azure では実施しない |
+
+所要時間は 53.6秒（ローカルの Docker は 2.6秒）。差はネットワークの往復による。
+サーバの `time_zone` は `+00:00` だが、接続ごとにセッションを `+09:00` に設定しており、保存された `transacted_at` は
+`2026-09-05 12:00:00`（`TEST_FIXED_NOW` の値）で、DB 側の時刻に依存していないことを確認した。
+
 ### 未実施のテスト
 
 - **機能テスト（ST）**：test_spec.md 5.2・5.3 のとおり、要件（FR・NFR）単位で実施する。環境の指定があるもののうち、ST-28（3時間放置後の応答）、ST-37（Cookie の Secure 属性）、ST-39（本番設定での Swagger Docs の非表示）、ST-40（外部から FastAPI に到達できないこと）は Azure 検証環境が必要
