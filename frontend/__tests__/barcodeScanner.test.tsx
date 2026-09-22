@@ -62,7 +62,7 @@ describe("Barcode Detection API（第一候補）", () => {
     expect(ctor).toHaveBeenCalledWith({ formats: ["code_128"] });
     expect(onDetect).toHaveBeenCalledWith("1001");
     expect(mockReaderConstructor).not.toHaveBeenCalled();
-    expect(screen.getByText("スキャン中")).toBeInTheDocument();
+    expect(screen.getByText("スキャン中（BarcodeDetector）")).toBeInTheDocument();
   });
 
   it("test_extra_ かざしたままの間は、同じコードを繰り返し追加しない", async () => {
@@ -84,12 +84,12 @@ describe("Barcode Detection API（第一候補）", () => {
     expect(onDetect).toHaveBeenCalledTimes(1);
   });
 
-  it("test_extra_ 一度離して 0.5秒たてば、同じコードをもう一度読み取れる", async () => {
+  it("test_extra_ 1.0秒以上・連続5フレーム読めなくなったら、同じコードをもう一度読み取れる", async () => {
     installBarcodeDetector(["code_128"]);
     let now = 0;
     const onDetect = jest.fn();
-    const frame = async (at: number, codes: string[]) => {
-      now = at;
+    const frame = async (codes: string[]) => {
+      now += 200;
       detector.detect.mockResolvedValue(codes.map((rawValue) => ({ rawValue })));
       await act(async () => {
         await jest.advanceTimersByTimeAsync(200);
@@ -101,15 +101,18 @@ describe("Barcode Detection API（第一候補）", () => {
     await flush();
     expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // 離してすぐ映し直す（0.5秒に満たない）ので、まだ受け付けない
-    await frame(200, []);
-    await frame(400, ["1001"]);
+    // 読み取りが4フレーム途切れただけでは解除しない（手ぶれで一瞬外れた場合）
+    for (let i = 0; i < 4; i += 1) {
+      await frame([]);
+    }
+    await frame(["1001"]);
     expect(onDetect).toHaveBeenCalledTimes(1);
 
-    // 400 から 0.5秒あけて映すと受け付ける（同じ商品の数量加算）
-    await frame(600, []);
-    await frame(800, []);
-    await frame(900, ["1001"]);
+    // 5フレーム連続で読めず、最後の検出から 1.0秒以上たったら受け付ける
+    for (let i = 0; i < 5; i += 1) {
+      await frame([]);
+    }
+    await frame(["1001"]);
     expect(onDetect).toHaveBeenCalledTimes(2);
     expect(onDetect).toHaveBeenNthCalledWith(2, "1001");
   });
@@ -194,16 +197,42 @@ describe("ZXing（非対応ブラウザでの代替）", () => {
     expect(video).toBeInstanceOf(HTMLVideoElement);
 
     act(() => {
-      callback(undefined, undefined, controls); // 読めないフレーム
+      callback(undefined, undefined, controls); // 読めないフレームも 1 フレームとして渡す
       callback({ getText: () => "M000001" }, undefined, controls);
       callback({ getText: () => "M000001" }, undefined, controls); // かざしたまま
     });
     expect(onDetect).toHaveBeenCalledTimes(1);
     expect(onDetect).toHaveBeenCalledWith("M000001");
-    expect(screen.getByText("スキャン中")).toBeInTheDocument();
+    expect(screen.getByText("スキャン中（ZXing）")).toBeInTheDocument();
 
     unmount();
     expect(controls.stop).toHaveBeenCalled();
+  });
+
+  it("test_extra_ ZXing でも、読めなかったフレームを空として渡すので「離した」判定ができる", async () => {
+    mockDecodeFromConstraints.mockResolvedValue(controls);
+    let now = 0;
+    const onDetect = jest.fn();
+    render(<BarcodeScanner onDetect={onDetect} now={() => now} />);
+    await flush();
+    const callback = mockDecodeFromConstraints.mock.calls[0][2];
+    const result = { getText: () => "1001" };
+
+    act(() => {
+      callback(result, undefined, controls);
+    });
+    expect(onDetect).toHaveBeenCalledTimes(1);
+
+    // 読めないフレームが5回、最後の検出から 1.0秒以上
+    act(() => {
+      for (let i = 1; i <= 5; i += 1) {
+        now = i * 200;
+        callback(undefined, undefined, controls);
+      }
+      now = 1200;
+      callback(result, undefined, controls);
+    });
+    expect(onDetect).toHaveBeenCalledTimes(2);
   });
 
   it("test_extra_ ZXing でもカメラを使えなければ手入力を案内する", async () => {

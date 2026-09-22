@@ -1,7 +1,7 @@
 // 画面で使う純粋な関数。test_spec.md にケース ID がないため test_extra_
 import { purchaseFingerprint, reuseOrCreateKey } from "@/lib/idempotencyKey";
 import { CLIENT_MESSAGES, messageForError } from "@/lib/messages";
-import { SCAN_RELEASE_MS, createScanGate } from "@/lib/scanGate";
+import { SCAN_RELEASE_FRAMES, SCAN_RELEASE_MS, createScanGate } from "@/lib/scanGate";
 import { parseStaffCookie } from "@/lib/staff";
 import type { CartLine } from "@/lib/pricing";
 
@@ -58,56 +58,75 @@ describe("冪等キー（購入リストか会員が変わったら作り直す�
   });
 });
 
-describe("スキャンの重複防止（一度離すまで同じコードを受け付けない）", () => {
+describe("スキャンの重複防止（一度離すまで同じコードを受け付けない。design.md 6.4）", () => {
+  // 読み取りは 200ms ごと。「離した」と判断するには、1.0秒以上たち、かつ連続5フレーム検出されないことが必要
+  const frames = (gate: ReturnType<typeof createScanGate>, from: number, count: number, codes: string[] = []) => {
+    for (let i = 1; i <= count; i += 1) {
+      gate.accept(codes, from + i * 200);
+    }
+    return from + count * 200;
+  };
+
   it("test_extra_ 最初の読み取りは受け付ける", () => {
     expect(createScanGate().accept(["1001"], 1000)).toEqual(["1001"]);
   });
 
   it("test_extra_ かざしたままの間は、何フレーム続いても受け付けない", () => {
-    // 読み取りは 200ms ごと。見え続けているかぎり、いくら時間がたっても受け付けない
     const gate = createScanGate();
     expect(gate.accept(["1001"], 0)).toEqual(["1001"]);
-    for (const at of [200, 400, 600, 800, 1000, 1200, 1400]) {
+    for (let at = 200; at <= 6000; at += 200) {
       expect(gate.accept(["1001"], at)).toEqual([]);
     }
   });
 
-  it("test_extra_ 検出が 0.5秒以上途切れたら、見え続けていても離したものとして扱う", () => {
-    // 判定はあくまで「映像から検出されなくなった時間」。フレームが飛べば離したときと区別できない
+  it("test_extra_ 1.0秒以上たち、かつ連続5フレーム検出されなければ受け付ける", () => {
     const gate = createScanGate();
     gate.accept(["1001"], 0);
-    expect(gate.accept(["1001"], SCAN_RELEASE_MS)).toEqual(["1001"]);
+    const at = frames(gate, 0, SCAN_RELEASE_FRAMES); // 200〜1000ms の5フレームは何も読めない
+    expect(at).toBe(SCAN_RELEASE_MS);
+    expect(gate.accept(["1001"], at + 200)).toEqual(["1001"]);
   });
 
-  it("test_extra_ 最後に見えてから 0.5秒あけば、同じコードを受け付ける（数量の加算）", () => {
-    const gate = createScanGate();
-    expect(gate.accept(["1001"], 0)).toEqual(["1001"]);
-    expect(gate.accept([], 200)).toEqual([]); // 離した
-    expect(gate.accept(["1001"], SCAN_RELEASE_MS)).toEqual(["1001"]); // 0 から 0.5秒あいた
-  });
-
-  it("test_extra_ 0.5秒たつ前に映り直すと、離れていた時間を数え直す", () => {
+  it("test_extra_ 時間がたっていても、検出されなかったフレームが5回に満たなければ受け付けない", () => {
+    // 読み取りが途切れがちでも、解除されないことの確認（フレーム数の条件）
     const gate = createScanGate();
     gate.accept(["1001"], 0);
-    gate.accept([], 300);
-    expect(gate.accept(["1001"], 400)).toEqual([]); // 0 から 400ms しかあいていない。ここで数え直す
-    expect(gate.accept([], 700)).toEqual([]);
-    expect(gate.accept(["1001"], 899)).toEqual([]); // 400 から 499ms。まだ受け付けない
-    expect(gate.accept([], 1000)).toEqual([]);
-    expect(gate.accept(["1001"], 899 + SCAN_RELEASE_MS)).toEqual(["1001"]);
+    frames(gate, 0, SCAN_RELEASE_FRAMES - 1); // 空フレームは4回だけ
+    expect(gate.accept(["1001"], 100000)).toEqual([]);
+  });
+
+  it("test_extra_ フレーム数が足りていても、1.0秒たっていなければ受け付けない", () => {
+    // 読み取りが速い（フレーム間隔が短い）場合に、すぐ解除されないことの確認（時間の条件）
+    const gate = createScanGate(SCAN_RELEASE_MS, SCAN_RELEASE_FRAMES);
+    gate.accept(["1001"], 0);
+    for (let i = 1; i <= 10; i += 1) {
+      gate.accept([], i * 50); // 50ms ごとに10フレーム（合計 500ms）
+    }
+    expect(gate.accept(["1001"], 550)).toEqual([]);
+  });
+
+  it("test_extra_ 途中で一度でも検出されたら、時間もフレーム数も数え直す", () => {
+    const gate = createScanGate();
+    gate.accept(["1001"], 0);
+    frames(gate, 0, 4); // 空フレーム4回（800ms）
+    gate.accept(["1001"], 1000); // 手ぶれなどで再び見えた → 数え直し
+    frames(gate, 1000, 4); // 空フレーム4回（1800ms まで）
+    expect(gate.accept(["1001"], 2000)).toEqual([]); // 5回目に満たないので受け付けない
+    frames(gate, 2000, SCAN_RELEASE_FRAMES);
+    expect(gate.accept(["1001"], 3200)).toEqual(["1001"]);
   });
 
   it("test_extra_ 別のコードはすぐ受け付ける（連続スキャン）", () => {
     const gate = createScanGate();
     expect(gate.accept(["1001"], 0)).toEqual(["1001"]);
-    expect(gate.accept(["2001"], 1)).toEqual(["2001"]);
+    expect(gate.accept(["2001"], 200)).toEqual(["2001"]);
   });
 
   it("test_extra_ 別のコードを受け付けた直後は、そちらがかざしたまま扱いになる", () => {
     const gate = createScanGate();
     gate.accept(["1001"], 0);
-    gate.accept(["2001"], 1);
-    expect(gate.accept(["2001"], 200)).toEqual([]);
+    gate.accept(["2001"], 200);
+    expect(gate.accept(["2001"], 400)).toEqual([]);
   });
 
   it("test_extra_ 何も読めないフレームだけでは何も受け付けない", () => {
